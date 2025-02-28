@@ -184,8 +184,9 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
   if (!response.ok) {
     return { result: null, shared: null, error: response.statusText };
   }
+  console.error(response);
   const result = await response.json();
-  console.log(result);
+  console.error(result);
   const secretKey = client.secret && blake3(client.secret).slice(0, 32);
   const kyqKey = blake3(client.ky_q).slice(0, 32);
   const passwordsPromises = result.map(async (item: [EP, Uuid]) => {
@@ -198,16 +199,17 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
   });
   const passwords = await Promise.all(passwordsPromises);
   
-  const sharedResponse = await fetch(API_URL + "get_shared_pass_json/" + uuidToStr(uuid));
-  if (!sharedResponse.ok) {
+  // const sharedResponse = await fetch(API_URL + "get_shared_pass_json/" + uuidToStr(uuid));
+/*   if (!sharedResponse.ok) {
     return { 
       result: [passwords.map(p => p[0]), passwords.map(p => p[1])] as [Password[], Uuid[]], 
       shared: null, 
       error: sharedResponse.statusText 
     };
-  }
+  } */
   
-  const sharedResult = await sharedResponse.json();
+  // const sharedResult = await sharedResponse.json();
+  const sharedResult: [SharedPass, Uuid, Uuid][] = [];
   const sharedPasswordsPromises = sharedResult.map(async (item: [SharedPass, Uuid, Uuid]) => {
     const [sharedPass, ownerUuid, passUuid] = item;
     

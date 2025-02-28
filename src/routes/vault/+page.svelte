@@ -129,6 +129,11 @@
     });
 
     // Traiter les mots de passe normaux
+    if (encryptedCredentials.length === 0) {
+      loading = false;
+      return;
+    }
+
     const processedCredentials = encryptedCredentials
       .map((item, index) => {
         const uuid = item[1];
