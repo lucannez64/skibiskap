@@ -1,29 +1,40 @@
 <script lang="ts">
   import { z } from "zod";
   import { decodeClientEx } from "$lib/decoder.js";
-  import { auth } from "$lib/client.ts";
-  import { clientex, client, token } from "./stores.ts";
+  import { auth, create_account } from "$lib/client";
+  import { clientex, client, token } from "./stores";
   import { goto } from "$app/navigation";
   import SecureLS from "secure-ls";
 
   // Define the validation schema with Zod.
-  const formSchema = z.object({
+  const loginFormSchema = z.object({
     email: z.string().email({
-      message: "Please enter a valid email address.",
+      message: "Veuillez entrer une adresse email valide.",
     }),
     file: z
       .instanceof(File)
-      .refine((file) => file.size <= 5000000, "Max file size is 5MB."),
+      .refine((file) => file.size <= 5000000, "Taille maximale du fichier: 5MB."),
+  });
+
+  const registerFormSchema = z.object({
+    email: z.string().email({
+      message: "Veuillez entrer une adresse email valide.",
+    }),
   });
 
   // Reactive form state variables.
   let email = "";
   let file: File | null = null;
   let errors: { email?: string; file?: string } = {};
+  let showRegisterForm = false;
+  let registerEmail = "";
+  let registerErrors: { email?: string } = {};
 
   // State for loading and submission status.
   let isLoading = false;
   let submitStatus: "success" | "error" | null = null;
+  let registerStatus: "success" | "error" | null = null;
+  let registerMessage = "";
 
   // Handle file input changes.
   function handleFileChange(e: Event) {
@@ -33,15 +44,15 @@
     }
   }
 
-  // Handle form submission.
-  async function onSubmit(event: Event) {
+  // Handle login form submission.
+  async function onLoginSubmit(event: Event) {
     event.preventDefault();
     // Reset errors and submission status.
     errors = {};
     submitStatus = null;
 
     // Validate the form data.
-    const result = formSchema.safeParse({ email, file });
+    const result = loginFormSchema.safeParse({ email, file });
     if (!result.success) {
       const zodErrors = result.error.flatten();
       if (zodErrors.fieldErrors.email)
@@ -53,25 +64,49 @@
 
     isLoading = true;
 
-    // Simulate an API call (replace with your actual API call).
-
     // Decode the file using decodeClientEx function.
     const arrayBuffer = await file!.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
     const decodedFile = await decodeClientEx(uint8Array);
-    const uuid = decodedFile.id.id!;
-    const { result: tok , client: sharedva, error} = await auth(uuid, decodedFile.c);
+    console.log(decodedFile);
+    
+    if (!decodedFile || !decodedFile.id || !decodedFile.id.id || !decodedFile.c) {
+      submitStatus = "error";
+      console.error("Fichier décodé invalide");
+      console.log(decodedFile);
+      isLoading = false;
+      return;
+    }
+    
+    const uuid = decodedFile.id.id;
+    const { result: tok, client: sharedva, error } = await auth(uuid, decodedFile.c);
     
     // API call
-
     if (error == null) {
       submitStatus = "success";
       console.log({ email, file });
       const ls = new SecureLS({ encodingType: "aes" });
       clientex.set(decodedFile);
       client.set(sharedva);
-      token.set(tok);
+      token.set(String(tok));
+      
       const clientez = $clientex;
+      if (!clientez || !clientez.c || !clientez.id || !clientez.id.id) {
+        submitStatus = "error";
+        console.error("Données client invalides");
+        isLoading = false;
+        return;
+      }
+      
+      if (!clientez.c.ky_p || !clientez.c.ky_q || !clientez.c.di_p || 
+          !clientez.c.di_q || !clientez.c.secret || !clientez.id.ky_p || 
+          !clientez.id.id.bytes) {
+        submitStatus = "error";
+        console.error("Données client incomplètes");
+        isLoading = false;
+        return;
+      }
+      
       const clie = {
         ky_p: Array.from(clientez.c.ky_p),
         ky_q: Array.from(clientez.c.ky_q),
@@ -99,128 +134,239 @@
 
     isLoading = false;
   }
+
+  // Handle register form submission
+  async function onRegisterSubmit(event: Event) {
+    event.preventDefault();
+    // Reset errors and submission status
+    registerErrors = {};
+    registerStatus = null;
+    registerMessage = "";
+
+    // Validate the form data
+    const result = registerFormSchema.safeParse({ email: registerEmail });
+    if (!result.success) {
+      const zodErrors = result.error.flatten();
+      if (zodErrors.fieldErrors.email)
+        registerErrors.email = zodErrors.fieldErrors.email.join(", ");
+      return;
+    }
+
+    isLoading = true;
+
+    try {
+      // Create account
+      const { clientEx, encodedFile, error } = await create_account(registerEmail);
+      
+      if (error) {
+        registerStatus = "error";
+        registerMessage = error;
+        console.error(error);
+      } else if (encodedFile) {
+        // Create a download link for the file
+        const blob = new Blob([encodedFile], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${registerEmail.replace('@', '_at_')}_skibiskap.key`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        registerStatus = "success";
+        registerMessage = "Compte créé avec succès! Veuillez télécharger et conserver votre fichier de clé en lieu sûr.";
+      }
+    } catch (error) {
+      registerStatus = "error";
+      registerMessage = error instanceof Error ? error.message : "Une erreur est survenue";
+      console.error(error);
+    }
+
+    isLoading = false;
+  }
+
+  // Toggle between login and register forms
+  function toggleForm() {
+    showRegisterForm = !showRegisterForm;
+    // Reset form states
+    errors = {};
+    registerErrors = {};
+    submitStatus = null;
+    registerStatus = null;
+    registerMessage = "";
+  }
 </script>
 
-<div class="flex items-center justify-center min-h-screen bg-zinc-700">
-  <div class="w-full max-w-md bg-blue-100 rounded shadow overflow-hidden">
+<svelte:head>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700&family=Work+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+</svelte:head>
+
+<div class="flex items-center justify-center min-h-screen" style="background-color: #1d1b21; font-family: 'Work Sans', sans-serif;">
+  <div class="w-full max-w-md rounded-[0.5rem] shadow-lg overflow-hidden" style="background-color: #ced7e1;">
     <!-- Card Header -->
-    <div class="p-4 border-b">
-      <h2 class="text-xl text-zinc-800 font-bold">Login</h2>
-      <p class="text-sm text-zinc-500">
-        Enter your email and upload a file to login.
+    <div class="p-6 border-b" style="border-color: #474b4f;">
+      <h2 class="text-[2.125rem] font-bold mb-2" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">
+        {showRegisterForm ? "Créer un compte" : "Connexion"}
+      </h2>
+      <p class="text-[0.8125rem]" style="color: #474b4f;">
+        {showRegisterForm 
+          ? "Créez un compte pour commencer à utiliser l'application." 
+          : "Entrez votre email et téléchargez votre fichier de clé pour vous connecter."}
       </p>
     </div>
 
     <!-- Card Content (Form) -->
-    <div class="p-4">
-      <form on:submit={onSubmit} class="space-y-6">
-        <!-- Email Field -->
-        <div>
-          <label class="block text-sm font-medium text-zinc-700" for="email">
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            bind:value={email}
-            placeholder="your@email.com"
-            class="mt-1 block w-full border border-zinc-300 rounded p-2 focus:ring-blue-500 focus:border-blue-500"
-          />
-          <p class="text-xs text-zinc-500">We'll never share your email.</p>
-          {#if errors.email}
-            <p class="mt-1 text-xs text-red-500">{errors.email}</p>
-          {/if}
-        </div>
-
-        <!-- File Field -->
-        <div>
-          <label class="block text-sm font-medium text-zinc-700" for="file">
-            File
-          </label>
-          <input
-            id="file"
-            type="file"
-            on:change={handleFileChange}
-            class="mt-1 block w-full text-sm text-zinc-500
-              file:bg-zinc-600
-              file:mr-4 file:py-2 file:px-4
-              file:rounded file:border-0
-              file:text-sm file:font-semibold
-              file:text-green-400
-              hover:file:bg-zinc-700"
-          />
-          <p class="text-xs text-zinc-500">
-            Upload a file (max 5MB, .pdf, .jpeg, or .png)
-          </p>
-          {#if errors.file}
-            <p class="mt-1 text-xs text-red-500">{errors.file}</p>
-          {/if}
-        </div>
-
-        <!-- Submit Button -->
-        <button
-          type="submit"
-          class="w-full bg-blue-600 text-white py-2 px-4 rounded disabled:opacity-50"
-          disabled={isLoading}
-        >
-          {#if isLoading}
-            Logging in...
-          {:else}
-            Login
-          {/if}
-        </button>
-      </form>
-    </div>
-
-    <!-- Card Footer (Alerts) -->
-    <div class="p-4 border-t">
-      {#if submitStatus === "success"}
-        <div class="flex items-center p-2 bg-green-50 border border-green-200 rounded">
-          <!-- Check icon -->
-          <svg
-            class="h-4 w-4 text-green-600 mr-2"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M5 13l4 4L19 7"
-            />
-          </svg>
+    <div class="p-6">
+      {#if !showRegisterForm}
+        <!-- Login Form -->
+        <form on:submit={onLoginSubmit} class="space-y-6">
+          <!-- Email Field -->
           <div>
-            <p class="font-bold text-green-700">Success</p>
-            <p class="text-sm text-green-600">
-              You have successfully logged in.
-            </p>
-          </div>
-        </div>
-      {:else if submitStatus === "error"}
-        <div class="flex items-center p-2 bg-red-50 border border-red-200 rounded">
-          <!-- Error icon -->
-          <svg
-            class="h-4 w-4 text-red-600 mr-2"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="email">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              bind:value={email}
+              placeholder="votre@email.com"
+              class="mt-1 block w-full border p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
+              style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
             />
-          </svg>
-          <div>
-            <p class="font-bold text-red-700">Error</p>
-            <p class="text-sm text-red-600">
-              There was a problem logging in. Please try again.
-            </p>
+            {#if errors.email}
+              <p class="mt-2 text-[0.8125rem]" style="color: #b00e0b;">{errors.email}</p>
+            {/if}
           </div>
-        </div>
+
+          <!-- File Upload Field -->
+          <div>
+            <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="file">
+              Fichier de clé
+            </label>
+            <div class="relative">
+              <input
+                id="file"
+                type="file"
+                on:change={handleFileChange}
+                class="block w-full text-[0.8125rem] file:mr-4 file:py-2 file:px-4
+                      file:rounded-[0.21428571428571427rem] file:border-0 file:text-[0.8125rem] file:font-semibold
+                      hover:file:opacity-90 cursor-pointer"
+                style="color: #474b4f; file-background-color: #f2c3c2; file-color: #1d1b21;"
+              />
+            </div>
+            {#if errors.file}
+              <p class="mt-2 text-[0.8125rem]" style="color: #b00e0b;">{errors.file}</p>
+            {/if}
+          </div>
+
+          <!-- Submit Button -->
+          <button
+            name="login"
+            type="submit"
+            disabled={isLoading}
+            class="w-full py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
+            style="background-color: #f2c3c2; color: #1d1b21; font-family: 'Raleway', sans-serif; focus-ring-color: #a7f3ae;"
+          >
+            {isLoading ? "Chargement..." : "Se connecter"}
+          </button>
+
+          <!-- Status Messages -->
+          {#if submitStatus === "success"}
+            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #a7f3ae; color: #1d1b21;">
+              Connexion réussie!
+            </div>
+          {:else if submitStatus === "error"}
+            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
+              Erreur de connexion. Veuillez vérifier vos informations.
+            </div>
+          {/if}
+        </form>
+      {:else}
+        <!-- Register Form -->
+        <form on:submit={onRegisterSubmit} class="space-y-6">
+          <!-- Email Field -->
+          <div>
+            <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="registerEmail">
+              Email
+            </label>
+            <input
+              id="registerEmail"
+              type="email"
+              bind:value={registerEmail}
+              placeholder="votre@email.com"
+              class="mt-1 block w-full border p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
+              style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
+            />
+            {#if registerErrors.email}
+              <p class="mt-2 text-[0.8125rem]" style="color: #b00e0b;">{registerErrors.email}</p>
+            {/if}
+          </div>
+
+          <!-- Submit Button -->
+          <button
+            type="submit"
+            disabled={isLoading}
+            name="register"
+            class="w-full py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
+            style="background-color: #a7f3ae; color: #1d1b21; font-family: 'Raleway', sans-serif; focus-ring-color: #f2c3c2;"
+          >
+            {isLoading ? "Création en cours..." : "Créer un compte"}
+          </button>
+
+          <!-- Status Messages -->
+          {#if registerStatus === "success"}
+            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #a7f3ae; color: #1d1b21;">
+              {registerMessage}
+            </div>
+          {:else if registerStatus === "error"}
+            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
+              Erreur: {registerMessage}
+            </div>
+          {/if}
+        </form>
       {/if}
+
+      <!-- Toggle Form Link -->
+      <div class="mt-6 text-center">
+        <button
+          on:click={toggleForm}
+          class="text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-80 focus:outline-none"
+          style="color: #1d1b21; font-family: 'Raleway', sans-serif;"
+        >
+          {showRegisterForm 
+            ? "Déjà un compte? Se connecter" 
+            : "Pas encore de compte? S'inscrire"}
+        </button>
+      </div>
     </div>
   </div>
 </div>
+
+<style>
+  /* Personnalisation du bouton de téléchargement de fichier */
+  input[type="file"]::file-selector-button {
+    background-color: #1d1b21;
+    color: #f2c3c2;
+    font-family: 'Raleway', sans-serif;
+    border: none;
+    transition: all 0.2s ease-in-out;
+  }
+  
+  input[type="file"]::file-selector-button:hover {
+    opacity: 0.9;
+  }
+  
+  /* Focus styles */
+  input[type="email"]:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #a7f3ae;
+  }
+
+  button[name="register"]:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #866b6b;
+  }
+</style>
