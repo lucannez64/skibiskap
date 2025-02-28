@@ -129,7 +129,7 @@
     });
 
     // Traiter les mots de passe normaux
-    if (encryptedCredentials.length === 0) {
+    if (encryptedCredentials[0].length === 0) {
       loading = false;
       return;
     }

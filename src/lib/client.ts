@@ -189,7 +189,8 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
   console.error(result);
   const secretKey = client.secret && blake3(client.secret).slice(0, 32);
   const kyqKey = blake3(client.ky_q).slice(0, 32);
-  const passwordsPromises = result.map(async (item: [EP, Uuid]) => {
+  const passwordsResult: [EP, Uuid][] = result.passwords;
+  const passwordsPromises = passwordsResult.map(async (item: [EP, Uuid]) => {
     const [ep, uuid] = item;
     const { result: decrypted, error} = decryptCredential(ep, secretKey, kyqKey);
     if (error) {
@@ -260,43 +261,178 @@ function decryptCredential(ep: EP, secretKey: Uint8Array | null, kyqKey: Uint8Ar
   return decoded ? { result: decoded, error: null } : { result: null, error: "Decoding failed" };
 }
 
+/**
+ * Fonction utilitaire pour afficher les données binaires de manière lisible
+ */
+function debugBinary(name: string, data: Uint8Array | null | undefined) {
+  if (!data) {
+    console.log(`${name}: null ou undefined`);
+    return;
+  }
+  
+  const preview = Array.from(data.slice(0, 16))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join(' ');
+  
+  console.log(`${name}: longueur=${data.length}, début=[${preview}${data.length > 16 ? '...' : ''}]`);
+}
+
+/**
+ * Vérifie si les données binaires sont compatibles avec le format attendu par le serveur Rust
+ * @param data Les données binaires à vérifier
+ * @param expectedLength La longueur attendue des données (optionnel)
+ * @returns Un objet indiquant si les données sont valides et un message d'erreur le cas échéant
+ */
+function verifyBinaryData(data: Uint8Array | null | undefined, expectedLength?: number): { valid: boolean, error: string | null } {
+  // Vérifier si les données existent
+  if (!data) {
+    return { valid: false, error: "Les données sont nulles ou non définies" };
+  }
+  
+  // Vérifier la longueur si spécifiée
+  if (expectedLength !== undefined && data.length !== expectedLength) {
+    return { 
+      valid: false, 
+      error: `Longueur incorrecte: ${data.length} octets (attendu: ${expectedLength} octets)` 
+    };
+  }
+  
+  // Vérifier que toutes les valeurs sont des octets valides (0-255)
+  const invalidBytes = Array.from(data).filter(byte => !Number.isInteger(byte) || byte < 0 || byte > 255);
+  if (invalidBytes.length > 0) {
+    return { 
+      valid: false, 
+      error: `Contient ${invalidBytes.length} valeurs non valides: ${invalidBytes.slice(0, 5).join(', ')}${invalidBytes.length > 5 ? '...' : ''}` 
+    };
+  }
+  
+  return { valid: true, error: null };
+}
+
 function send(ep: EP, client: Client) {
-  const secret = client.secret;
-  if (!secret) {
-    return { result: null, error: null };
+  try {
+    // Vérifier que le client a un secret
+    const secret = client.secret;
+    if (!secret) {
+      return { result: null, error: "Client secret is missing" };
+    }
+    
+    // Dériver la clé de chiffrement à partir du secret
+    const hash = blake3(secret);
+    const key = hash.slice(0, 32);
+    
+    // Vérifier que le nonce existe
+    if (!ep.nonce) {
+      return { result: null, error: "EP nonce is missing" };
+    }
+    
+    // S'assurer que ciphertext est un Uint8Array
+    const ciphertextArray = ep.ciphertext instanceof Uint8Array 
+      ? ep.ciphertext 
+      : Uint8Array.from(ep.ciphertext);
+    
+    // Générer un nonce aléatoire pour le chiffrement externe (nonce2)
+    const nonce2 = randomBytes(24);
+    
+    // Déboguer les données avant chiffrement
+    debugBinary("send - ciphertext", ciphertextArray);
+    debugBinary("send - key", key);
+    debugBinary("send - nonce2", nonce2);
+    
+    // Créer le chiffreur XChaCha20-Poly1305
+    const cipher = xchacha20poly1305(key, nonce2);
+    
+    
+    // Chiffrer le ciphertext avec le secret du client
+    const ciphertext = cipher.encrypt(ciphertextArray);
+    console.log("ciphertext :", ciphertext);
+    
+    // S'assurer que le nonce est un Uint8Array
+    const nonceArray = ep.nonce instanceof Uint8Array 
+      ? ep.nonce 
+      : Uint8Array.from(ep.nonce);
+    
+    // Créer l'objet EP résultant
+    const epr: EP = {
+      ciphertext: ciphertext,
+      nonce: nonceArray,
+      nonce2: nonce2,
+    };
+    
+    return { result: epr, error: null };
+  } catch (error) {
+    console.error("Erreur dans send:", error);
+    return { 
+      result: null, 
+      error: `Erreur lors de la préparation pour l'envoi: ${error instanceof Error ? error.message : String(error)}` 
+    };
   }
-  const hash = blake3(secret);
-  const key = hash.slice(0, 32);
-  if (!ep.nonce) {
-    return { result: null, error: null };
-  }
-  const nonce = randomBytes(24);
-  const cipher = xchacha20poly1305(key, nonce);
-  const ciphertext = cipher.encrypt(Uint8Array.from(ep.ciphertext));
-  const epr: EP = {
-    ciphertext: ciphertext,
-    nonce: ep.nonce,
-    nonce2: nonce,
-  };
-  return { result: epr, error: null };
 }
 
 function encrypt(pass: Password, client: Client) {
-  const passb = encodePassword(pass);
-  if (!passb) {
-    return { result: null, error: "Invalid password" };
+  try {
+    // Encoder le mot de passe en format binaire
+    const passb = encodePassword(pass);
+    if (!passb) {
+      return { result: null, error: "Invalid password" };
+    }
+    
+    // Déboguer les données du mot de passe encodé
+    debugBinary("encrypt - passb", passb);
+    
+    // Utiliser la clé privée du client pour dériver une clé de chiffrement
+    const hash = blake3(client.ky_q);
+    const key = hash.slice(0, 32);
+    
+    // Déboguer la clé dérivée
+    debugBinary("encrypt - client.ky_q", client.ky_q);
+    debugBinary("encrypt - key", key);
+    
+    // Générer un nonce aléatoire exactement de 24 octets (taille requise pour XChaCha20Poly1305)
+    const nonce = randomBytes(24);
+    debugBinary("encrypt - nonce", nonce);
+    
+    // Vérifier que le nonce a la bonne taille
+    if (nonce.length !== 24) {
+      return { result: null, error: "Le nonce généré n'a pas la bonne taille (24 octets attendus)" };
+    }
+    
+    // Créer le chiffreur XChaCha20-Poly1305
+    const cipher = xchacha20poly1305(key, nonce);
+    
+    // Chiffrer le mot de passe encodé
+    const ciphertext = cipher.encrypt(passb);
+    debugBinary("encrypt - ciphertext", ciphertext);
+    
+    // Vérifier que le chiffrement a fonctionné
+    if (!ciphertext || ciphertext.length === 0) {
+      return { result: null, error: "Le chiffrement a échoué, ciphertext vide" };
+    }
+    
+    // Créer l'objet EP (Encrypted Password)
+    const ep: EP = {
+      ciphertext: ciphertext,
+      nonce: nonce,
+      nonce2: null, // nonce2 est ajouté lors de l'appel à send()
+    };
+    
+    // Vérifier que l'objet EP est valide
+    if (!ep.ciphertext || ep.ciphertext.length === 0) {
+      return { result: null, error: "EP invalide: ciphertext manquant" };
+    }
+    
+    if (!ep.nonce || ep.nonce.length !== 24) {
+      return { result: null, error: "EP invalide: nonce manquant ou de taille incorrecte" };
+    }
+    
+    return { result: ep, error: null };
+  } catch (error) {
+    console.error("Erreur dans encrypt:", error);
+    return { 
+      result: null, 
+      error: `Erreur lors du chiffrement: ${error instanceof Error ? error.message : String(error)}` 
+    };
   }
-  const hash = blake3(client.ky_q);
-  const key = hash.slice(0, 32);
-  const nonce = randomBytes(24);
-  const cipher = xchacha20poly1305(key, nonce);
-  const ciphertext = cipher.encrypt(passb!);
-  const ep: EP = {
-    ciphertext: ciphertext,
-    nonce: nonce,
-    nonce2: null,
-  };
-  return { result: ep, error: null };
 }
 
 export async function update_pass(
@@ -349,20 +485,22 @@ export async function create_pass(uuid: Uuid, pass: Password, client: Client) {
     nonce: Array.from(eq.result.nonce),
     nonce2: Array.from(eq.result.nonce2!),
   };
-  const res = await fetch(API_URL + "create_pass_json/" + uuidToStr(uuid), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const res = await fetch(
+    API_URL + "create_pass_json/" + uuidToStr(uuid),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(truer),
     },
-    body: JSON.stringify(truer),
-  });
+  );
   if (!res.ok) {
     return { result: null, error: res.statusText };
   }
   const result = await res.json();
   return { result: result, error: null };
 }
-
 export async function delete_pass(uuid: Uuid, uuid2: Uuid, client: Client) {
   const res = await fetch(
     API_URL + "delete_pass_json/" + uuidToStr(uuid) + "/" + uuidToStr(uuid2),
