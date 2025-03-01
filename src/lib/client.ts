@@ -17,7 +17,8 @@ import { ml_kem1024 } from "@noble/post-quantum/ml-kem";
 import { blake3 } from "@noble/hashes/blake3";
 import { xchacha20poly1305 } from "@noble/ciphers/chacha";
 import { randomBytes } from "@noble/ciphers/webcrypto";
-import { parse as uuidParse } from 'uuid';
+import * as pkg from "uuid-tool";
+const { Uuid } = pkg;
 
 // Utiliser une URL relative pour que le proxy Vite fonctionne correctement
 const API_URL = "/api/";
@@ -28,6 +29,16 @@ const API_URL = "/api/";
 interface SharedPass {
   kem_ct: Uint8Array;
   ep: EP;
+}
+
+interface SharedByUser {
+  pass_id: Uuid;
+  recipient_ids: Uuid[];
+}
+
+interface SharedByUserEmail {
+  pass_id: Uuid;
+  emails: string[];
 }
 
 interface ReceivedCK {
@@ -46,7 +57,6 @@ export async function create_account(email: string) {
   try {
     // Générer les clés pour le client
     const ky_p = ml_kem1024.keygen();
-    const ky_q = ml_kem1024.keygen();
     const { publicKey: di_p, secretKey: di_q } = ml_dsa87.keygen(randomBytes(32));
     const secret = randomBytes(32);
 
@@ -54,7 +64,7 @@ export async function create_account(email: string) {
     // Créer le client
     const client: Client2 = {
       ky_p: {data: ky_p.publicKey},
-      ky_q: {data: ky_q.secretKey},
+      ky_q: {data: ky_p.secretKey},
       di_p: {data: di_p},
       di_q: {data: di_q},
       secret
@@ -62,7 +72,7 @@ export async function create_account(email: string) {
 
     const client2: Client = {
       ky_p: ky_p.publicKey,
-      ky_q: ky_q.secretKey,
+      ky_q: ky_p.secretKey,
       di_p: di_p,
       di_q: di_q,
       secret
@@ -175,7 +185,6 @@ export async function auth(uuid: Uuid, client: Client) {
   const result2 = Uint8Array.from(await response3.json());
   const shared = ml_kem1024.decapsulate(result2, client.ky_q);
   client.secret = shared;
-
   return { result: response2, client: client, error: null };
 }
 
@@ -184,23 +193,56 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
   if (!response.ok) {
     return { result: null, shared: null, error: response.statusText };
   }
-  console.error(response);
   const result = await response.json();
-  console.error(result);
-  const secretKey = client.secret && blake3(client.secret).slice(0, 32);
-  const kyqKey = blake3(client.ky_q).slice(0, 32);
-  const passwordsResult: [EP, Uuid][] = result.passwords;
-  const passwordsPromises = passwordsResult.map(async (item: [EP, Uuid]) => {
+  const secretKey = client.secret;
+  const passwordsResult: [EP, string][] = result.passwords;
+  console.log(passwordsResult);
+  const passwordsPromises = passwordsResult.map(async (item: [EP, string]) => {
     const [ep, uuid] = item;
-    const { result: decrypted, error} = decryptCredential(ep, secretKey, kyqKey);
-    if (error) {
+    const { result: decrypted, error} = decryptCredential(ep, secretKey, client.ky_q);
+    if (error) { 
       console.error(error);
     }
-    return [decrypted, uuid];
+    const uuid2 = new Uuid(uuid);
+    const uuid3 = {
+      bytes: new Uint8Array(uuid2.toBytes()),
+    };
+    return [decrypted, uuid3];
   });
   const passwords = await Promise.all(passwordsPromises);
   
-  // const sharedResponse = await fetch(API_URL + "get_shared_pass_json/" + uuidToStr(uuid));
+
+  const sharedPasswordsResult: [SharedPass, string, string][] = result.shared_passes;
+  const sharedPasswordsPromises = sharedPasswordsResult.map(async (item: [SharedPass, string, string]) => {
+    const [sharedPass, ownerUuid, passUuid] = item;
+    const uuid2 = new Uuid(ownerUuid);
+    const uuid3: Uuid = {
+      bytes: new Uint8Array(uuid2.toBytes()),
+    };
+    const uuid4 = new Uuid(passUuid);
+    const uuid5: Uuid = {
+      bytes: new Uint8Array(uuid4.toBytes()),
+    };
+    const sharedPassObj: SharedPass = { 
+      kem_ct: Uint8Array.from(sharedPass.kem_ct),
+      ep: {
+        ciphertext: Uint8Array.from(sharedPass.ep.ciphertext),
+        nonce: Uint8Array.from(sharedPass.ep.nonce),
+        nonce2: sharedPass.ep.nonce2 ? Uint8Array.from(sharedPass.ep.nonce2) : null
+      }
+    };
+    const { result: decrypted, error } = decrypt_shared(sharedPassObj, client);
+    if (error) {
+      console.error(error);
+      return null;
+    }
+    if (!decrypted) {
+      return null;
+    }
+    return [decrypted, uuid3, uuid5];
+  });
+  const sharedPasswords = await Promise.all(sharedPasswordsPromises);
+  const sharedPasswords2: [Password[], Uuid[], Uuid[]] = sharedPasswords.filter(p => p !== null) as [Password[], Uuid[], Uuid[]];
 /*   if (!sharedResponse.ok) {
     return { 
       result: [passwords.map(p => p[0]), passwords.map(p => p[1])] as [Password[], Uuid[]], 
@@ -210,229 +252,79 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
   } */
   
   // const sharedResult = await sharedResponse.json();
-  const sharedResult: [SharedPass, Uuid, Uuid][] = [];
-  const sharedPasswordsPromises = sharedResult.map(async (item: [SharedPass, Uuid, Uuid]) => {
-    const [sharedPass, ownerUuid, passUuid] = item;
-    
-    const sharedPassObj: SharedPass = {
-      kem_ct: Uint8Array.from(sharedPass.kem_ct),
-      ep: {
-        ciphertext: Uint8Array.from(sharedPass.ep.ciphertext),
-        nonce: Uint8Array.from(sharedPass.ep.nonce),
-        nonce2: sharedPass.ep.nonce2 ? Uint8Array.from(sharedPass.ep.nonce2) : null
-      }
-    };
-    
-    const { result: decrypted, error } = decrypt_shared(sharedPassObj, client);
-    if (error) {
-      console.error(error);
-    }
-    return [decrypted, ownerUuid, passUuid];
-  });
-  
-  const sharedPasswords = await Promise.all(sharedPasswordsPromises);
   
   return { 
     result: [passwords.map(p => p[0]), passwords.map(p => p[1])] as [Password[], Uuid[]], 
     shared: [
-      sharedPasswords.map(p => p[0]), 
-      sharedPasswords.map(p => p[1]), 
-      sharedPasswords.map(p => p[2])
+      sharedPasswords2.map(p => p[0]), 
+      sharedPasswords2.map(p => p[1]), 
+      sharedPasswords2.map(p => p[2])
     ] as [Password[], Uuid[], Uuid[]], 
     error: null 
   };
 }
 
-function decryptCredential(ep: EP, secretKey: Uint8Array | null, kyqKey: Uint8Array): { result: Password | null, error: string | null } {
+function decryptCredential(ep: EP, secretKey: Uint8Array | null, kyqKey: Uint8Array | null): { result: Password | null, error: string | null } {
   if (!secretKey) {
     return { result: null, error: "Missing client.secret" };
   }
   if (!ep.nonce2) {
     return { result: null, error: "Missing nonce2" };
   }
+  if (!kyqKey) {
+    return { result: null, error: "Missing client.ky_q" };
+  }
+  const hash = blake3(secretKey).slice(0, 32);
+  const key = new Uint8Array(hash); 
   const nonce2 = ep.nonce2 instanceof Uint8Array ? ep.nonce2.slice(0, 24) : Uint8Array.from(ep.nonce2).slice(0, 24);
-  const chacha = xchacha20poly1305(secretKey, nonce2);
+  const chacha = xchacha20poly1305(key, nonce2);
   const ciphertext1 = ep.ciphertext instanceof Uint8Array ? ep.ciphertext : Uint8Array.from(ep.ciphertext);
   const decryptedIntermediate = chacha.decrypt(ciphertext1);
   const nonce = ep.nonce instanceof Uint8Array ? ep.nonce : Uint8Array.from(ep.nonce);
-  const cipher = xchacha20poly1305(kyqKey, nonce);
+  const hash2 = blake3(kyqKey!).slice(0, 32);
+  const key2 = new Uint8Array(hash2);
+  const cipher = xchacha20poly1305(key2, nonce);
   const finalDecrypted = cipher.decrypt(decryptedIntermediate);
   const decoded = decodePassword(finalDecrypted);
   return decoded ? { result: decoded, error: null } : { result: null, error: "Decoding failed" };
 }
 
-/**
- * Fonction utilitaire pour afficher les données binaires de manière lisible
- */
-function debugBinary(name: string, data: Uint8Array | null | undefined) {
-  if (!data) {
-    console.log(`${name}: null ou undefined`);
-    return;
-  }
-  
-  const preview = Array.from(data.slice(0, 16))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join(' ');
-  
-  console.log(`${name}: longueur=${data.length}, début=[${preview}${data.length > 16 ? '...' : ''}]`);
-}
-
-/**
- * Vérifie si les données binaires sont compatibles avec le format attendu par le serveur Rust
- * @param data Les données binaires à vérifier
- * @param expectedLength La longueur attendue des données (optionnel)
- * @returns Un objet indiquant si les données sont valides et un message d'erreur le cas échéant
- */
-function verifyBinaryData(data: Uint8Array | null | undefined, expectedLength?: number): { valid: boolean, error: string | null } {
-  // Vérifier si les données existent
-  if (!data) {
-    return { valid: false, error: "Les données sont nulles ou non définies" };
-  }
-  
-  // Vérifier la longueur si spécifiée
-  if (expectedLength !== undefined && data.length !== expectedLength) {
-    return { 
-      valid: false, 
-      error: `Longueur incorrecte: ${data.length} octets (attendu: ${expectedLength} octets)` 
-    };
-  }
-  
-  // Vérifier que toutes les valeurs sont des octets valides (0-255)
-  const invalidBytes = Array.from(data).filter(byte => !Number.isInteger(byte) || byte < 0 || byte > 255);
-  if (invalidBytes.length > 0) {
-    return { 
-      valid: false, 
-      error: `Contient ${invalidBytes.length} valeurs non valides: ${invalidBytes.slice(0, 5).join(', ')}${invalidBytes.length > 5 ? '...' : ''}` 
-    };
-  }
-  
-  return { valid: true, error: null };
-}
-
 function send(ep: EP, client: Client) {
-  try {
-    // Vérifier que le client a un secret
-    const secret = client.secret;
-    if (!secret) {
-      return { result: null, error: "Client secret is missing" };
-    }
-    
-    // Dériver la clé de chiffrement à partir du secret
-    const hash = blake3(secret);
-    const key = hash.slice(0, 32);
-    
-    // Vérifier que le nonce existe
-    if (!ep.nonce) {
-      return { result: null, error: "EP nonce is missing" };
-    }
-    
-    // S'assurer que ciphertext est un Uint8Array
-    const ciphertextArray = ep.ciphertext instanceof Uint8Array 
-      ? ep.ciphertext 
-      : Uint8Array.from(ep.ciphertext);
-    
-    // Générer un nonce aléatoire pour le chiffrement externe (nonce2)
-    const nonce2 = randomBytes(24);
-    
-    // Déboguer les données avant chiffrement
-    debugBinary("send - ciphertext", ciphertextArray);
-    debugBinary("send - key", key);
-    debugBinary("send - nonce2", nonce2);
-    
-    // Créer le chiffreur XChaCha20-Poly1305
-    const cipher = xchacha20poly1305(key, nonce2);
-    
-    
-    // Chiffrer le ciphertext avec le secret du client
-    const ciphertext = cipher.encrypt(ciphertextArray);
-    console.log("ciphertext :", ciphertext);
-    
-    // S'assurer que le nonce est un Uint8Array
-    const nonceArray = ep.nonce instanceof Uint8Array 
-      ? ep.nonce 
-      : Uint8Array.from(ep.nonce);
-    
-    // Créer l'objet EP résultant
-    const epr: EP = {
-      ciphertext: ciphertext,
-      nonce: nonceArray,
-      nonce2: nonce2,
-    };
-    
-    return { result: epr, error: null };
-  } catch (error) {
-    console.error("Erreur dans send:", error);
-    return { 
-      result: null, 
-      error: `Erreur lors de la préparation pour l'envoi: ${error instanceof Error ? error.message : String(error)}` 
-    };
+  if (!client.secret) {
+    return { result: null, error: "Missing client.secret" };
   }
+  const hash = blake3(client.secret).slice(0, 32);
+  const nonce2 = randomBytes(24);
+  const key = new Uint8Array(hash);
+  const cipher = xchacha20poly1305(key, nonce2);
+  const ciphertext = cipher.encrypt(ep.ciphertext);
+  const ep2: EP = {
+    ciphertext: ciphertext,
+    nonce: ep.nonce,
+    nonce2: nonce2
+  };
+  return { result: ep2, error: null };
 }
 
 function encrypt(pass: Password, client: Client) {
-  try {
-    // Encoder le mot de passe en format binaire
-    const passb = encodePassword(pass);
-    if (!passb) {
-      return { result: null, error: "Invalid password" };
-    }
-    
-    // Déboguer les données du mot de passe encodé
-    debugBinary("encrypt - passb", passb);
-    
-    // Utiliser la clé privée du client pour dériver une clé de chiffrement
-    const hash = blake3(client.ky_q);
-    const key = hash.slice(0, 32);
-    
-    // Déboguer la clé dérivée
-    debugBinary("encrypt - client.ky_q", client.ky_q);
-    debugBinary("encrypt - key", key);
-    
-    // Générer un nonce aléatoire exactement de 24 octets (taille requise pour XChaCha20Poly1305)
-    const nonce = randomBytes(24);
-    debugBinary("encrypt - nonce", nonce);
-    
-    // Vérifier que le nonce a la bonne taille
-    if (nonce.length !== 24) {
-      return { result: null, error: "Le nonce généré n'a pas la bonne taille (24 octets attendus)" };
-    }
-    
-    // Créer le chiffreur XChaCha20-Poly1305
-    const cipher = xchacha20poly1305(key, nonce);
-    
-    // Chiffrer le mot de passe encodé
-    const ciphertext = cipher.encrypt(passb);
-    debugBinary("encrypt - ciphertext", ciphertext);
-    
-    // Vérifier que le chiffrement a fonctionné
-    if (!ciphertext || ciphertext.length === 0) {
-      return { result: null, error: "Le chiffrement a échoué, ciphertext vide" };
-    }
-    
-    // Créer l'objet EP (Encrypted Password)
-    const ep: EP = {
-      ciphertext: ciphertext,
-      nonce: nonce,
-      nonce2: null, // nonce2 est ajouté lors de l'appel à send()
-    };
-    
-    // Vérifier que l'objet EP est valide
-    if (!ep.ciphertext || ep.ciphertext.length === 0) {
-      return { result: null, error: "EP invalide: ciphertext manquant" };
-    }
-    
-    if (!ep.nonce || ep.nonce.length !== 24) {
-      return { result: null, error: "EP invalide: nonce manquant ou de taille incorrecte" };
-    }
-    
-    return { result: ep, error: null };
-  } catch (error) {
-    console.error("Erreur dans encrypt:", error);
-    return { 
-      result: null, 
-      error: `Erreur lors du chiffrement: ${error instanceof Error ? error.message : String(error)}` 
-    };
+  const passb = encodePassword(pass);
+  if (!passb) {
+    return { result: null, error: "Échec de l'encodage du mot de passe" };
   }
+  if (!client.ky_q) {
+    return { result: null, error: "Missing client.ky_q" };
+  }
+  const hash = blake3(client.ky_q).slice(0, 32);
+  const nonce = randomBytes(24);
+  const key = new Uint8Array(hash);
+  const cipher = xchacha20poly1305(key, nonce);
+  const ciphertext = cipher.encrypt(passb);
+  const ep: EP = {
+    ciphertext: ciphertext,
+    nonce: nonce,
+    nonce2: null
+  };
+  return { result: ep, error: null };
 }
 
 export async function update_pass(
@@ -617,12 +509,27 @@ function decrypt_shared(sharedPass: SharedPass, client: Client): { result: Passw
 export async function share_pass(
   ownerUuid: Uuid,
   passUuid: Uuid,
-  recipientUuid: Uuid,
+  recipientEmail: string,
   client: Client,
-  recipientPublicKey: Uint8Array,
   password: Password
 ): Promise<{result: string|null, error: string|null}> {
   // Chiffrer le mot de passe pour le partage
+
+  const recipientUuid = await get_uuid_from_email(recipientEmail);
+  if (!recipientUuid) {
+    return { result: null, error: "Échec de la récupération de l'UUID du destinataire" };
+  }
+
+  const recipientUuid2 = new Uuid(recipientUuid);
+  const uuid: Uuid = {
+    bytes: new Uint8Array(recipientUuid2.toBytes()),
+  };
+
+  const recipientPublicKey = await get_public_key(uuid);
+  if (!recipientPublicKey) {
+    return { result: null, error: "Échec de la récupération de la clé publique du destinataire" };
+  }
+
   const { result: sharedPass, error } = share_encrypt(password, recipientPublicKey, client);
   if (!sharedPass || error) {
     return { result: null, error: error || "Échec du chiffrement pour le partage" };
@@ -637,13 +544,17 @@ export async function share_pass(
       nonce2: sharedPass.ep.nonce2 ? Array.from(sharedPass.ep.nonce2) : null
     }
   };
-  
+
+  console.log(API_URL + "share_pass_json/" + 
+    uuidToStr(ownerUuid) + "/" + 
+    uuidToStr(passUuid) + "/" + 
+    uuidToStr(uuid));
   // Envoyer la requête au serveur
   const res = await fetch(
     API_URL + "share_pass_json/" + 
     uuidToStr(ownerUuid) + "/" + 
     uuidToStr(passUuid) + "/" + 
-    uuidToStr(recipientUuid),
+    uuidToStr(uuid),
     {
       method: "POST",
       headers: {
@@ -734,4 +645,93 @@ export async function get_shared_pass(
   // Déchiffrer le mot de passe partagé
   const { result, error } = decrypt_shared(sharedPass, client);
   return { result, error };
+}
+
+
+export async function get_uuid_from_email(email: string) {
+  const res = await fetch(API_URL + "get_uuid_from_email/" + email);
+  if (!res.ok) {
+    return null;
+  }
+  const result = await res.text();
+  return result;
+}
+
+export async function get_public_key(uuid: Uuid) {
+  const res = await fetch(API_URL + "get_public_key/" + uuidToStr(uuid));
+  if (!res.ok) {
+    return null;
+  }
+  const result = await res.json();
+  const result2: Uint8Array = new Uint8Array(result);
+  return result2;
+}
+
+export async function get_shared_by_user(ownerUuid: Uuid) : Promise<SharedByUser[]|null> {
+  const res = await fetch(API_URL + "get_shared_by_user/" + uuidToStr(ownerUuid));
+  if (!res.ok) {
+    return null;
+  }
+  const result = await res.json();
+  return result;
+}
+
+export async function get_uuids_from_emails(emails: string[]): Promise<Uuid[]|null> {
+  const res = await fetch(API_URL + "get_uuids_from_emails/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(emails),
+  });
+  if (!res.ok) {
+    return null;
+  }
+  const result = await res.json();
+  return result;
+}
+
+export async function get_emails_from_uuids(uuids: Uuid[]): Promise<string[]|null> {
+  const uuids2 = uuids.map((uuid) => {
+    const uuid2 = uuidToStr(uuid);
+    return uuid2;
+  });
+  const res = await fetch(API_URL + "get_emails_from_uuids/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(uuids2),
+  });
+  if (!res.ok) {
+    return null;
+  }
+  const result = await res.json();
+  return result;
+}
+export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<SharedByUserEmail[]|null> {
+  const sharedByUser = await get_shared_by_user(ownerUuid);
+  if (!sharedByUser) {
+    return null;
+  } 
+  const emails: SharedByUserEmail[] = [];
+  const emails2 = await Promise.all(sharedByUser.map(async (user) => {
+    const uuids = user.recipient_ids;
+    const uuids2 = uuids.map((uuid) => {
+      const uuid3 = new Uuid(uuid);
+      const uuid4 = {
+        bytes: new Uint8Array(uuid3.toBytes()),
+      };
+      return uuid4;
+    });
+    const emails2 = await get_emails_from_uuids(uuids2);
+    if (emails2) {
+      return {
+        pass_id: user.pass_id,
+        emails: emails2,
+      };
+    }
+  }));
+  const emails3 = emails2.filter((email) => email !== undefined);
+return emails3;
 }

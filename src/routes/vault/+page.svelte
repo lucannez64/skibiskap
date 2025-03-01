@@ -3,7 +3,7 @@
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { clientex, client } from "../stores";
-  import { get_all, update_pass, delete_pass, create_pass } from "$lib/client";
+  import { get_all, update_pass, delete_pass, create_pass, share_pass, get_shared_by_user, get_shared_by_user_emails, get_emails_from_uuids } from "$lib/client";
   import { from_uri, generate } from "$lib/otp";
   import * as pkg from "uuid-tool";
   import Plus from "lucide-svelte/icons/plus";
@@ -13,6 +13,8 @@
   import { writable, get } from "svelte/store";
   import Search from "lucide-svelte/icons/search";
   const { Uuid } = pkg;
+	import { uuidToStr, type Password, type Uuid as UuidType } from "$lib/decoder";
+
 
   // Définition des types
   interface Credential {
@@ -25,6 +27,7 @@
     twoFA: string | null;
     intervalId?: number | null;
     sharedBy?: string;
+    owneremail?: string;
   }
 
   interface EditedRecord {
@@ -133,11 +136,20 @@
       loading = false;
       return;
     }
+    // encryptedCredentials[0] is the passwords
+    // encryptedCredentials[1] is the uuids
+    // make one array with the passwords and the uuids
+    const passwords = encryptedCredentials[0];
+    const uuids = encryptedCredentials[1];
+    const passwordsAndUuids: [Password, UuidType][] = passwords.map((password, index) => [password, uuids[index]]);
 
-    const processedCredentials = encryptedCredentials
+    const processedCredentials = passwordsAndUuids
       .map((item, index) => {
         const uuid = item[1];
         const cred = item[0];
+        console.log(cred);
+        console.log(uuid);
+        const uuidstr = uuidToStr(uuid);
         if (!cred || typeof cred !== 'object') return null;
         
         // Vérifier que cred est de type Password
@@ -163,7 +175,7 @@
           id: index,
           service: url,
           username,
-          uuid: typeof uuid === 'string' ? uuid : '',
+          uuid: typeof uuidstr === 'string' ? uuidstr : '',
           password,
           otp,
           twoFA: null,
@@ -174,28 +186,45 @@
     // Traiter les mots de passe partagés si disponibles
     let processedSharedCredentials: Credential[] = [];
     if (sharedCredentials) {
+      const emails = new Map<string, string>();
+      for (const uuid of sharedCredentials[2]) {
+        const uuidstr = uuidToStr(uuid);
+        const uuid3 = new Uuid(uuidstr);
+        const uuid2 = {
+          bytes: new Uint8Array(uuid3.toBytes()),
+        };
+        const email = await get_emails_from_uuids([uuid2]);
+        if (email) {
+          console.log(email);
+          emails.set(uuidstr, email[0]);
+        }
+      }
+      console.log(emails);
       processedSharedCredentials = sharedCredentials[0]
         .map((cred, index) => {
           if (!cred) return null;
           
-          const ownerUuid = sharedCredentials[1][index];
-          const passUuid = sharedCredentials[2][index];
+          const ownerUuid = sharedCredentials[2][index];
+          const passUuid = sharedCredentials[1][index];
           
           // Vérifier que cred est de type Password
           const password = 'password' in cred ? cred.password : '';
           const url = 'url' in cred ? cred.url : '';
           const username = 'username' in cred ? cred.username : '';
           const otp = 'otp' in cred ? cred.otp : null;
-          
+          const passuuidstr = uuidToStr(passUuid);
+          const owneruuidstr = uuidToStr(ownerUuid);
+          const owneremail = emails.get(owneruuidstr);
           return {
             id: processedCredentials.length + index, // Éviter les conflits d'ID
-            service: url ? `${url} (Partagé)` : 'Partagé',
+            service: url,
             username,
-            uuid: typeof passUuid === 'string' ? passUuid : '',
+            uuid: typeof passuuidstr === 'string' ? passuuidstr : '',
             password,
             otp,
             twoFA: null,
-            sharedBy: typeof ownerUuid === 'string' ? ownerUuid : '',
+            sharedBy: typeof owneruuidstr === 'string' ? owneruuidstr : '',
+            owneremail: typeof owneremail === 'string' ? owneremail : '',
           } as Credential;
         })
         .filter((item): item is Credential => item !== null);
@@ -203,6 +232,10 @@
 
     // Combiner les mots de passe normaux et partagés
     credentials = [...processedCredentials, ...processedSharedCredentials];
+    const sharedByUserEmails = await get_shared_by_user_emails($clientex.id.id);
+    if (sharedByUserEmails) {
+      console.log(sharedByUserEmails);
+    }
     loading = false;
   });
 
@@ -382,7 +415,7 @@
     const newId = credentials.length
       ? Math.max(...credentials.map((cred) => cred.id)) + 1
       : 0;
-    const newItem: Credential = {
+    let newItem: Credential = {
       id: newId,
       service: newRecord.service,
       username: newRecord.username,
@@ -413,6 +446,8 @@
         console.error(response.error);
         return;
       }
+      const uuid = new Uuid(response.result.bytes);
+      newItem.uuid = uuid.toString();
       credentials = [...credentials, newItem];
 
       // Reset the form
@@ -456,6 +491,7 @@
   // Fonction pour afficher le modal de partage
   function showShareModal(credential: Credential) {
     sharingCredential = credential;
+    console.log(sharingCredential);
     showingShareModal = true;
     shareUserId = '';
     shareError = '';
@@ -470,7 +506,7 @@
   // Fonction pour partager un mot de passe
   async function sharePassword() {
     if (!sharingCredential || !shareUserId || shareUserId.trim() === '') {
-      shareError = "Veuillez entrer un ID utilisateur valide";
+      shareError = "Veuillez entrer une adresse email valide";
       return;
     }
     
@@ -478,29 +514,39 @@
     shareError = '';
     
     try {
-      // Convertir l'ID en UUID si nécessaire
-      const userId = shareUserId.trim();
-      
       // Vérifier que le client est défini
-      const clientValue = get(client);
-      if (!clientValue) {
+      if (!$client) {
         throw new Error("Client non initialisé");
       }
       
-      // Appeler la fonction de partage du client
-      // @ts-ignore - La fonction share_pass existe dans le client mais TypeScript ne la reconnaît pas
-      const result = await clientValue.share_pass(
-        sharingCredential.id,
-        userId
+      console.log(sharingCredential);
+      // Appeler la fonction de partage avec l'email
+      const passUuid = new Uuid(sharingCredential.uuid);
+      const passUuid2 = {
+        bytes: new Uint8Array(passUuid.toBytes()),
+      };
+      console.log(passUuid);
+      console.log(passUuid2);
+      const { result, error } = await share_pass(
+        $clientex!.id.id!,
+        passUuid2,
+        shareUserId.trim(), // Utiliser l'email comme identifiant
+        $client,
+        {
+          password: sharingCredential.password,
+          otp: sharingCredential.otp,
+          username: sharingCredential.username,
+          url: sharingCredential.service,
+          description: null,
+          app_id: null,
+        }
       );
       
-      if (result === true) {
-        // Partage réussi
+      if (error) {
+        shareError = error;
+      } else {
         closeShareModal();
         showToast("Mot de passe partagé avec succès");
-      } else {
-        // Erreur lors du partage
-        shareError = "Erreur lors du partage du mot de passe";
       }
     } catch (error) {
       console.error("Erreur lors du partage:", error);
@@ -834,9 +880,9 @@
                   </button>
                 </div>
               {/if}
-              {#if credential.sharedBy}
+              {#if credential.owneremail}
                 <div class="mt-2 text-xs text-purple-700">
-                  Partagé par: {credential.sharedBy}
+                  Partagé par: {credential.owneremail}
                 </div>
               {/if}
             </div>
@@ -897,16 +943,16 @@
   <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
     <div class="bg-white rounded-lg p-6 w-full max-w-md">
       <h2 class="text-xl font-semibold mb-4">Partager le mot de passe</h2>
-      <p class="mb-4">Entrez l'identifiant de l'utilisateur avec qui vous souhaitez partager ce mot de passe.</p>
+      <p class="mb-4">Entrez l'adresse email de l'utilisateur avec qui vous souhaitez partager ce mot de passe.</p>
       
       <div class="mb-4">
-        <label for="shareUserId" class="block text-zinc-700 font-medium mb-1">ID Utilisateur</label>
+        <label for="shareUserId" class="block text-zinc-700 font-medium mb-1">Email</label>
         <input
-          type="text"
+          type="email"
           id="shareUserId"
           bind:value={shareUserId}
           class="w-full px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Entrez l'ID utilisateur"
+          placeholder="exemple@email.com"
           required
         />
       </div>
