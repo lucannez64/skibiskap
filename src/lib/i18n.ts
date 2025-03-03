@@ -1,10 +1,7 @@
 import { writable } from 'svelte/store';
-
 // Store pour la langue actuelle
 let currentLang2: 'fr' | 'en' = 'en';
-if (navigator.language == "fr" || navigator.language == "en") {
-    currentLang2 = navigator.language as 'fr' | 'en';
-}
+
 export const currentLang = writable<'fr' | 'en'>(currentLang2);
 
 // Traductions pour la page vault

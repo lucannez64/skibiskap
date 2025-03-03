@@ -325,6 +325,15 @@
   }
 
   onMount (async () => {
+    if (navigator.language.startsWith("fr") || navigator.language.startsWith("en")) {
+      if (navigator.language.startsWith("fr")) {
+        currentLang.set('fr');
+      } else {
+        currentLang.set('en');
+      }
+    }
+
+
     // Initialisation du client
     if (!isClientValid()) {
       const ls = new SecureLS({ encodingType: "aes" });

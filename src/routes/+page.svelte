@@ -2,15 +2,15 @@
   import { z } from "zod";
   import { decodeClientEx } from "$lib/decoder.js";
   import { auth, create_account } from "$lib/client";
+  import { onMount } from "svelte";
   import { clientex, client, token } from "./stores";
   import { goto } from "$app/navigation";
   import SecureLS from "secure-ls";
 
   let language: "fr" | "en" = "en";
-  // Language selection
-  if (navigator.language == "fr" || navigator.language == "en") {
-    language = navigator.language;
-  }
+//  if (navigator.language == "fr" || navigator.language == "en") {
+//    language = navigator.language;
+//  }
 
   // Define the validation schema with Zod.
   const loginFormSchema = z.object({
@@ -32,6 +32,12 @@
         ? "Veuillez entrer une adresse email valide." 
         : "Please enter a valid email address.",
     }),
+  });
+
+  onMount(() => {
+    if (navigator.language.startsWith("fr") || navigator.language.startsWith("en-US") || navigator.language.startsWith("en") || navigator.language.startsWith("en-GB")) {
+      language = navigator.language.startsWith("fr") ? "fr" : "en";
+    }
   });
 
   // Define translation type
