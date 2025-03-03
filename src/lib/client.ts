@@ -131,7 +131,6 @@ export async function create_account(email: string) {
         di_p: r.di_p.bytes
       }
     }
-    console.log(clientEx2);
 
     if (!response.ok) {
       return { 
@@ -142,8 +141,6 @@ export async function create_account(email: string) {
     }
   
     const encodedClientEx = encoder.encodeClientEx(clientEx2);
-    console.log(encodeExampleClientEx());
-    console.log(encodedClientEx);
     return { 
       clientEx: clientEx3, 
       encodedFile: encodedClientEx, 
@@ -197,6 +194,7 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
   const secretKey = client.secret;
   const passwordsResult: [EP, string][] = result.passwords;
   console.log(passwordsResult);
+  console.log(result.shared_passes);
   const passwordsPromises = passwordsResult.map(async (item: [EP, string]) => {
     const [ep, uuid] = item;
     const { result: decrypted, error} = decryptCredential(ep, secretKey, client.ky_q);
@@ -545,10 +543,6 @@ export async function share_pass(
     }
   };
 
-  console.log(API_URL + "share_pass_json/" + 
-    uuidToStr(ownerUuid) + "/" + 
-    uuidToStr(passUuid) + "/" + 
-    uuidToStr(uuid));
   // Envoyer la requête au serveur
   const res = await fetch(
     API_URL + "share_pass_json/" + 
@@ -725,13 +719,19 @@ export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<Shared
       return uuid4;
     });
     const emails2 = await get_emails_from_uuids(uuids2);
-    if (emails2) {
-      return {
-        pass_id: user.pass_id,
-        emails: emails2,
+    if (typeof user.pass_id == 'string') {
+      const pass_id = new Uuid(user.pass_id);
+      const pass_id2: Uuid = {
+        bytes: new Uint8Array(pass_id.toBytes()),
       };
+      if (emails2) {
+        return {
+          pass_id: pass_id2,
+          emails: emails2,
+        };
+      }
     }
   }));
   const emails3 = emails2.filter((email) => email !== undefined);
-return emails3;
+  return emails3;
 }
