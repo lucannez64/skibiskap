@@ -6,21 +6,101 @@
   import { goto } from "$app/navigation";
   import SecureLS from "secure-ls";
 
+  let language: "fr" | "en" = "en";
+  // Language selection
+  if (navigator.language == "fr" || navigator.language == "en") {
+    language = navigator.language;
+  }
+
   // Define the validation schema with Zod.
   const loginFormSchema = z.object({
     email: z.string().email({
-      message: "Veuillez entrer une adresse email valide.",
+      message: language === "fr" 
+        ? "Veuillez entrer une adresse email valide." 
+        : "Please enter a valid email address.",
     }),
     file: z
       .instanceof(File)
-      .refine((file) => file.size <= 5000000, "Taille maximale du fichier: 5MB."),
+      .refine((file) => file.size <= 5000000, language === "fr" 
+        ? "Taille maximale du fichier: 5MB." 
+        : "Maximum file size: 5MB."),
   });
 
   const registerFormSchema = z.object({
     email: z.string().email({
-      message: "Veuillez entrer une adresse email valide.",
+      message: language === "fr" 
+        ? "Veuillez entrer une adresse email valide." 
+        : "Please enter a valid email address.",
     }),
   });
+
+  // Define translation type
+  type TranslationKey = 
+    | "login" 
+    | "createAccount" 
+    | "createAccountDesc" 
+    | "loginDesc" 
+    | "email" 
+    | "keyFile" 
+    | "loading" 
+    | "connect" 
+    | "loginSuccess" 
+    | "loginError" 
+    | "creating" 
+    | "create" 
+    | "registerSuccess" 
+    | "registerError" 
+    | "alreadyAccount" 
+    | "noAccount" 
+    | "error";
+
+  type Translations = {
+    [key in "fr" | "en"]: {
+      [k in TranslationKey]: string;
+    }
+  };
+
+  // Translations
+  const translations: Translations = {
+    fr: {
+      login: "Connexion",
+      createAccount: "Créer un compte",
+      createAccountDesc: "Créez un compte pour commencer à utiliser l'application.",
+      loginDesc: "Entrez votre email et téléchargez votre fichier de clé pour vous connecter.",
+      email: "Email",
+      keyFile: "Fichier de clé",
+      loading: "Chargement...",
+      connect: "Se connecter",
+      loginSuccess: "Connexion réussie!",
+      loginError: "Erreur de connexion. Veuillez vérifier vos informations.",
+      creating: "Création en cours...",
+      create: "Créer un compte",
+      registerSuccess: "Compte créé avec succès! Veuillez télécharger et conserver votre fichier de clé en lieu sûr.",
+      registerError: "Erreur: ",
+      alreadyAccount: "Déjà un compte? Se connecter",
+      noAccount: "Pas encore de compte? S'inscrire",
+      error: "Une erreur est survenue"
+    },
+    en: {
+      login: "Login",
+      createAccount: "Create Account",
+      createAccountDesc: "Create an account to start using the application.",
+      loginDesc: "Enter your email and upload your key file to log in.",
+      email: "Email",
+      keyFile: "Key File",
+      loading: "Loading...",
+      connect: "Log in",
+      loginSuccess: "Login successful!",
+      loginError: "Login error. Please check your information.",
+      creating: "Creating account...",
+      create: "Create Account",
+      registerSuccess: "Account created successfully! Please download and keep your key file in a safe place.",
+      registerError: "Error: ",
+      alreadyAccount: "Already have an account? Log in",
+      noAccount: "Don't have an account? Sign up",
+      error: "An error occurred"
+    }
+  };
 
   // Reactive form state variables.
   let email = "";
@@ -72,7 +152,7 @@
     
     if (!decodedFile || !decodedFile.id || !decodedFile.id.id || !decodedFile.c) {
       submitStatus = "error";
-      console.error("Fichier décodé invalide");
+      console.error(language === "fr" ? "Fichier décodé invalide" : "Invalid decoded file");
       console.log(decodedFile);
       isLoading = false;
       return;
@@ -93,7 +173,7 @@
       const clientez = $clientex;
       if (!clientez || !clientez.c || !clientez.id || !clientez.id.id) {
         submitStatus = "error";
-        console.error("Données client invalides");
+        console.error(language === "fr" ? "Données client invalides" : "Invalid client data");
         isLoading = false;
         return;
       }
@@ -102,7 +182,7 @@
           !clientez.c.di_q || !clientez.c.secret || !clientez.id.ky_p || 
           !clientez.id.id.bytes) {
         submitStatus = "error";
-        console.error("Données client incomplètes");
+        console.error(language === "fr" ? "Données client incomplètes" : "Incomplete client data");
         isLoading = false;
         return;
       }
@@ -175,11 +255,11 @@
         URL.revokeObjectURL(url);
         
         registerStatus = "success";
-        registerMessage = "Compte créé avec succès! Veuillez télécharger et conserver votre fichier de clé en lieu sûr.";
+        registerMessage = translations[language].registerSuccess;
       }
     } catch (error) {
       registerStatus = "error";
-      registerMessage = error instanceof Error ? error.message : "Une erreur est survenue";
+      registerMessage = error instanceof Error ? error.message : translations[language].error;
       console.error(error);
     }
 
@@ -196,25 +276,41 @@
     registerStatus = null;
     registerMessage = "";
   }
+  
+  // Toggle language
+  function toggleLanguage() {
+    language = language === "fr" ? "en" : "fr";
+  }
 </script>
 
 <svelte:head>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
   <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700&family=Work+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 </svelte:head>
 
 <div class="flex items-center justify-center min-h-screen" style="background-color: #1d1b21; font-family: 'Work Sans', sans-serif;">
+  <!-- Language Selector -->
+  <div class="absolute top-4 right-4">
+    <button 
+      on:click={toggleLanguage}
+      class="px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ease-in-out"
+      style="background-color: #474b4f; color: white;"
+    >
+      {language === "fr" ? "Français" : "English"}
+    </button>
+  </div>
+
   <div class="w-full max-w-md rounded-[0.5rem] shadow-lg overflow-hidden" style="background-color: #ced7e1;">
     <!-- Card Header -->
     <div class="p-6 border-b" style="border-color: #474b4f;">
       <h2 class="text-[2.125rem] font-bold mb-2" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">
-        {showRegisterForm ? "Créer un compte" : "Connexion"}
+        {showRegisterForm ? translations[language].createAccount : translations[language].login}
       </h2>
       <p class="text-[0.8125rem]" style="color: #474b4f;">
         {showRegisterForm 
-          ? "Créez un compte pour commencer à utiliser l'application." 
-          : "Entrez votre email et téléchargez votre fichier de clé pour vous connecter."}
+          ? translations[language].createAccountDesc
+          : translations[language].loginDesc}
       </p>
     </div>
 
@@ -226,13 +322,13 @@
           <!-- Email Field -->
           <div>
             <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="email">
-              Email
+              {translations[language].email}
             </label>
             <input
               id="email"
               type="email"
               bind:value={email}
-              placeholder="votre@email.com"
+              placeholder="example@email.com"
               class="mt-1 block w-full border p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
               style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
             />
@@ -244,7 +340,7 @@
           <!-- File Upload Field -->
           <div>
             <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="file">
-              Fichier de clé
+              {translations[language].keyFile}
             </label>
             <div class="relative">
               <input
@@ -270,17 +366,17 @@
             class="w-full py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
             style="background-color: #f2c3c2; color: #1d1b21; font-family: 'Raleway', sans-serif; focus-ring-color: #a7f3ae;"
           >
-            {isLoading ? "Chargement..." : "Se connecter"}
+            {isLoading ? translations[language].loading : translations[language].connect}
           </button>
 
           <!-- Status Messages -->
           {#if submitStatus === "success"}
             <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #a7f3ae; color: #1d1b21;">
-              Connexion réussie!
+              {translations[language].loginSuccess}
             </div>
           {:else if submitStatus === "error"}
             <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
-              Erreur de connexion. Veuillez vérifier vos informations.
+              {translations[language].loginError}
             </div>
           {/if}
         </form>
@@ -290,13 +386,13 @@
           <!-- Email Field -->
           <div>
             <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="registerEmail">
-              Email
+              {translations[language].email}
             </label>
             <input
               id="registerEmail"
               type="email"
               bind:value={registerEmail}
-              placeholder="votre@email.com"
+              placeholder="example@email.com"
               class="mt-1 block w-full border p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
               style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
             />
@@ -313,7 +409,7 @@
             class="w-full py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
             style="background-color: #a7f3ae; color: #1d1b21; font-family: 'Raleway', sans-serif; focus-ring-color: #f2c3c2;"
           >
-            {isLoading ? "Création en cours..." : "Créer un compte"}
+            {isLoading ? translations[language].creating : translations[language].create}
           </button>
 
           <!-- Status Messages -->
@@ -323,7 +419,7 @@
             </div>
           {:else if registerStatus === "error"}
             <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
-              Erreur: {registerMessage}
+              {translations[language].registerError} {registerMessage}
             </div>
           {/if}
         </form>
@@ -337,8 +433,8 @@
           style="color: #1d1b21; font-family: 'Raleway', sans-serif;"
         >
           {showRegisterForm 
-            ? "Déjà un compte? Se connecter" 
-            : "Pas encore de compte? S'inscrire"}
+            ? translations[language].alreadyAccount
+            : translations[language].noAccount}
         </button>
       </div>
     </div>

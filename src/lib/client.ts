@@ -29,6 +29,13 @@ const API_URL = "/api/";
 interface SharedPass {
   kem_ct: Uint8Array;
   ep: EP;
+  status: ShareStatus;
+}
+
+export enum ShareStatus {
+  Pending,
+  Accepted,
+  Rejected
 }
 
 interface SharedByUser {
@@ -36,9 +43,10 @@ interface SharedByUser {
   recipient_ids: Uuid[];
 }
 
-interface SharedByUserEmail {
+export interface SharedByUserEmail {
   pass_id: Uuid;
   emails: string[];
+  statuses?: ShareStatus[];
 }
 
 interface ReceivedCK {
@@ -185,7 +193,7 @@ export async function auth(uuid: Uuid, client: Client) {
   return { result: response2, client: client, error: null };
 }
 
-export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Password[], Uuid[]]|null, shared: [Password[], Uuid[], Uuid[]]|null, error: string|null}> {
+export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Password[], Uuid[]]|null, shared: [Password[], Uuid[], Uuid[], ShareStatus[]]|null, error: string|null}> {
   const response = await fetch(API_URL + "send_all_json/" + uuidToStr(uuid));
   if (!response.ok) {
     return { result: null, shared: null, error: response.statusText };
@@ -227,7 +235,8 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
         ciphertext: Uint8Array.from(sharedPass.ep.ciphertext),
         nonce: Uint8Array.from(sharedPass.ep.nonce),
         nonce2: sharedPass.ep.nonce2 ? Uint8Array.from(sharedPass.ep.nonce2) : null
-      }
+      },
+      status: sharedPass.status
     };
     const { result: decrypted, error } = decrypt_shared(sharedPassObj, client);
     if (error) {
@@ -237,10 +246,10 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
     if (!decrypted) {
       return null;
     }
-    return [decrypted, uuid3, uuid5];
+    return [decrypted, uuid3, uuid5, sharedPass.status];
   });
   const sharedPasswords = await Promise.all(sharedPasswordsPromises);
-  const sharedPasswords2: [Password[], Uuid[], Uuid[]] = sharedPasswords.filter(p => p !== null) as [Password[], Uuid[], Uuid[]];
+  const sharedPasswords2: [Password[], Uuid[], Uuid[], ShareStatus[]] = sharedPasswords.filter(p => p !== null) as [Password[], Uuid[], Uuid[], ShareStatus[]];
 /*   if (!sharedResponse.ok) {
     return { 
       result: [passwords.map(p => p[0]), passwords.map(p => p[1])] as [Password[], Uuid[]], 
@@ -250,14 +259,15 @@ export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Pas
   } */
   
   // const sharedResult = await sharedResponse.json();
-  
+  console.log(sharedPasswords2);
   return { 
     result: [passwords.map(p => p[0]), passwords.map(p => p[1])] as [Password[], Uuid[]], 
     shared: [
       sharedPasswords2.map(p => p[0]), 
       sharedPasswords2.map(p => p[1]), 
-      sharedPasswords2.map(p => p[2])
-    ] as [Password[], Uuid[], Uuid[]], 
+      sharedPasswords2.map(p => p[2]),
+      sharedPasswords2.map(p => p[3])
+    ] as [Password[], Uuid[], Uuid[], ShareStatus[]], 
     error: null 
   };
 }
@@ -443,7 +453,8 @@ function share_encrypt(password: Password, recipientPublicKey: Uint8Array, clien
     // Créer le SharedPass
     const sharedPass: SharedPass = {
       kem_ct: cipherText,
-      ep: sharedEP
+      ep: sharedEP,
+      status: ShareStatus.Pending
     };
     
     return { result: sharedPass, error: null };
@@ -540,7 +551,8 @@ export async function share_pass(
       ciphertext: Array.from(sharedPass.ep.ciphertext),
       nonce: Array.from(sharedPass.ep.nonce),
       nonce2: sharedPass.ep.nonce2 ? Array.from(sharedPass.ep.nonce2) : null
-    }
+    },
+    status: sharedPass.status
   };
 
   // Envoyer la requête au serveur
@@ -633,7 +645,8 @@ export async function get_shared_pass(
       ciphertext: Uint8Array.from(sharedPassJson.ep.ciphertext),
       nonce: Uint8Array.from(sharedPassJson.ep.nonce),
       nonce2: sharedPassJson.ep.nonce2 ? Uint8Array.from(sharedPassJson.ep.nonce2) : null
-    }
+    },
+    status: sharedPassJson.status
   };
   
   // Déchiffrer le mot de passe partagé
@@ -724,10 +737,34 @@ export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<Shared
       const pass_id2: Uuid = {
         bytes: new Uint8Array(pass_id.toBytes()),
       };
+      
+      // Récupérer les statuts pour chaque partage
+      const statuses = await Promise.all(uuids2.map(async (recipientUuid) => {
+        try {
+          const res = await fetch(
+            API_URL + "get_shared_pass_status_json/" + 
+            uuidToStr(ownerUuid) + "/" + 
+            uuidToStr(pass_id2) + "/" + 
+            uuidToStr(recipientUuid)
+          );
+          
+          if (!res.ok) {
+            return ShareStatus.Pending; // Par défaut
+          }
+          
+          const status = await res.json();
+          return status as ShareStatus;
+        } catch (error) {
+          console.error("Erreur lors de la récupération du statut:", error);
+          return ShareStatus.Pending; // Par défaut en cas d'erreur
+        }
+      }));
+      
       if (emails2) {
         return {
           pass_id: pass_id2,
           emails: emails2,
+          statuses: statuses
         };
       }
     }
@@ -735,3 +772,20 @@ export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<Shared
   const emails3 = emails2.filter((email) => email !== undefined);
   return emails3;
 }
+
+export async function reject_shared_pass(recipientUuid: Uuid, ownerUuid: Uuid, passUuid: Uuid) {
+  const res = await fetch(API_URL + "reject_shared_pass_json/" + uuidToStr(recipientUuid) + "/" + uuidToStr(ownerUuid) + "/" + uuidToStr(passUuid));
+  if (!res.ok) {
+    return { result: null, error: res.statusText };
+  }
+  return { result: null, error: null };
+}
+
+export async function accept_shared_pass(recipientUuid: Uuid, ownerUuid: Uuid, passUuid: Uuid) {
+  const res = await fetch(API_URL + "accept_shared_pass_json/" + uuidToStr(recipientUuid) + "/" + uuidToStr(ownerUuid) + "/" + uuidToStr(passUuid));
+  if (!res.ok) {
+    return { result: null, error: res.statusText };
+  }
+  return { result: null, error: null };
+}
+
