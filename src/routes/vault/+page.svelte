@@ -1051,8 +1051,8 @@
     }
   }
 
-  // Fonction pour importer des mots de passe depuis un fichier JSON
-  async function importFromJson(event: Event) {
+  // Fonction pour importer des mots de passe depuis un fichier JSON ou CSV
+  async function importPasswords(event: Event) {
     const target = event.target as HTMLInputElement;
     if (!target.files || target.files.length === 0) return;
     
@@ -1061,15 +1061,99 @@
     
     try {
       const fileContent = await file.text();
-      const jsonPasswords = JSON.parse(fileContent) as Array<{
+      let passwords: Array<{
         username: string;
-        mdp: string;
-        name: string;
-        otp: string;
-      }>;
+        password: string;
+        url: string;
+        otp: string | null;
+      }> = [];
       
-      if (!Array.isArray(jsonPasswords)) {
-        throw new Error(t('invalidFileFormat', lang));
+      // Déterminer le type de fichier par son extension
+      const fileType = file.name.toLowerCase().endsWith('.csv') ? 'csv' : 'json';
+      
+      if (fileType === 'json') {
+        // Traitement du fichier JSON
+        const jsonPasswords = JSON.parse(fileContent) as Array<{
+          username: string;
+          mdp: string;
+          name: string;
+          otp: string;
+        }>;
+        
+        if (!Array.isArray(jsonPasswords)) {
+          throw new Error(t('invalidFileFormat', lang));
+        }
+        
+        // Convertir les mots de passe JSON au format standard
+        passwords = jsonPasswords.map(json => ({
+          username: json.username,
+          password: json.mdp,
+          url: json.name,
+          otp: json.otp && json.otp.length > 0 ? json.otp : null
+        }));
+      } else {
+        // Traitement du fichier CSV (format Chrome)
+        const lines = fileContent.split('\n');
+        
+        // Vérifier l'en-tête pour s'assurer qu'il s'agit d'un CSV Chrome
+        const header = lines[0].toLowerCase();
+        if (!header.includes('name') || !header.includes('url') || !header.includes('username') || !header.includes('password')) {
+          throw new Error(t('invalidCsvFormat', lang));
+        }
+        
+        // Déterminer les indices des colonnes
+        const headerCols = lines[0].split(',');
+        const nameIndex = headerCols.findIndex(col => col.toLowerCase().includes('name'));
+        const urlIndex = headerCols.findIndex(col => col.toLowerCase().includes('url'));
+        const usernameIndex = headerCols.findIndex(col => col.toLowerCase().includes('username'));
+        const passwordIndex = headerCols.findIndex(col => col.toLowerCase().includes('password'));
+        
+        // Parcourir les lignes (en sautant l'en-tête)
+        for (let i = 1; i < lines.length; i++) {
+          if (!lines[i].trim()) continue; // Ignorer les lignes vides
+          
+          // Analyser la ligne CSV (gestion des virgules dans les champs entre guillemets)
+          const values = parseCSVLine(lines[i]);
+          // Convert URL to our url format by extracting domain
+          let url = values[urlIndex] || values[nameIndex];
+          
+          // Remove protocol if present
+          if (url.includes('://')) {
+            url = url.split('://')[1];
+          }
+          
+          // Remove path and query params if present
+          if (url.includes('/')) {
+            url = url.split('/')[0];
+          }
+          
+          // Remove port if present
+          if (url.includes(':')) {
+            const parts = url.split(':');
+            // Keep port only if it's an IP address
+            if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(parts[0])) {
+              url = parts[0];
+            }
+          }
+          
+          // Validate against our URL format
+          const urlRegex = /^(([a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}|(\d{1,3}\.){3}\d{1,3}(:\d{1,5})?)$/;
+          if (!urlRegex.test(url)) {
+            // If invalid, try to extract domain
+            const domainMatch = url.match(/([a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]\.[a-zA-Z]{2,})/);
+            if (domainMatch) {
+              url = domainMatch[1];
+            }
+          }
+          if (values.length >= Math.max(nameIndex, urlIndex, usernameIndex, passwordIndex) + 1) {
+            passwords.push({
+              username: values[usernameIndex],
+              password: values[passwordIndex],
+              url: values[urlIndex] || values[nameIndex], // Utiliser l'URL ou le nom si l'URL est vide
+              otp: null // Chrome n'exporte pas les OTP
+            });
+          }
+        }
       }
       
       if (!isClientValid()) {
@@ -1077,21 +1161,21 @@
       }
       
       importingFile = true;
-      importTotal = jsonPasswords.length;
+      importTotal = passwords.length;
       importProgress = 0;
       
-      // Convertir les mots de passe JSON en format Password
-      const passwords = jsonPasswords.map(json => ({
-        username: json.username,
-        password: json.mdp,
+      // Convertir les mots de passe au format Password pour l'API
+      const passwordsForApi = passwords.map(pwd => ({
+        username: pwd.username,
+        password: pwd.password,
         app_id: null,
         description: null,
-        url: json.name,
-        otp: json.otp && json.otp.length > 0 ? json.otp : null
+        url: pwd.url,
+        otp: pwd.otp
       }));
       
       // Importer chaque mot de passe
-      for (const passwordData of passwords) {
+      for (const passwordData of passwordsForApi) {
         try {
           const response = await create_pass($clientex!.id.id!, passwordData, $client!);
           if (response.error) {
@@ -1133,6 +1217,34 @@
       importingFile = false;
       if (fileInput) fileInput.value = '';
     }
+  }
+  
+  // Fonction pour analyser une ligne CSV en tenant compte des guillemets
+  function parseCSVLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      
+      if (char === '"') {
+        // Si on trouve un guillemet, on bascule l'état "inQuotes"
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        // Si on trouve une virgule et qu'on n'est pas entre guillemets, on ajoute la valeur courante au résultat
+        result.push(current);
+        current = '';
+      } else {
+        // Sinon, on ajoute le caractère à la valeur courante
+        current += char;
+      }
+    }
+    
+    // Ajouter la dernière valeur
+    result.push(current);
+    
+    return result;
   }
 
   // Fonction pour obtenir l'URL de l'icône d'un site web
@@ -1528,6 +1640,121 @@
   .pulse-animation {
     animation: pulse 1s infinite;
   }
+
+  /* Styles responsives */
+  @media (max-width: 768px) {
+    .max-w-3xl {
+      width: 100%;
+      padding: 0 10px;
+    }
+    
+    .card {
+      padding: 12px !important;
+    }
+    
+    .absolute.top-4.right-4 {
+      position: relative;
+      top: 0;
+      right: 0;
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 1rem;
+    }
+    
+    h1.text-3xl {
+      font-size: 1.5rem;
+      margin-top: 1rem;
+    }
+    
+    .grid-cols-2 {
+      grid-template-columns: 1fr;
+    }
+  }
+  
+  @media (max-width: 640px) {
+    .flex.justify-between.items-start {
+      flex-direction: column;
+    }
+    
+    .flex.flex-col.items-end {
+      align-items: flex-start;
+      margin-top: 1rem;
+      width: 100%;
+    }
+    
+    .flex.space-x-2.mt-4 {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    
+    .flex.space-x-3.mt-4 {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    
+    .flex.space-x-2 button {
+      flex: 1;
+      min-width: 120px;
+    }
+    
+    .fixed.bottom-4.right-4 {
+      bottom: 1rem;
+      right: 1rem;
+    }
+    
+    .fixed.bottom-4.right-20 {
+      bottom: 1rem;
+      right: 5rem;
+    }
+    
+    .notification {
+      width: calc(100% - 2rem);
+      right: 1rem;
+      text-align: center;
+    }
+  }
+  
+  /* Ajustements pour les petits écrans */
+  @media (max-width: 480px) {
+    .p-4 {
+      padding: 0.5rem;
+    }
+    
+    .card {
+      padding: 10px !important;
+    }
+    
+    h3.text-lg {
+      font-size: 1rem;
+    }
+    
+    .text-sm {
+      font-size: 0.75rem;
+    }
+    
+    .px-4.py-2 {
+      padding: 0.5rem 0.75rem;
+    }
+    
+    .flex.items-center.mt-2 {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    
+    .w-10.h-10 {
+      width: 2rem;
+      height: 2rem;
+    }
+    
+    .card .flex.space-x-2 {
+      margin-top: 0.5rem;
+    }
+    
+    .fixed.inset-0 .card {
+      width: 90%;
+      max-width: none;
+    }
+  }
 </style>
 
 <div class="min-h-screen p-4" style="background-color: #1d1b21; font-family: 'Work Sans', sans-serif;">
@@ -1569,7 +1796,7 @@
           type="text"
           bind:value={searchTerm}
           placeholder={t('search', lang)}
-          class="w-full px-4 py-2 border rounded-lg
+          class="w-full border rounded-lg
                 focus:outline-none focus:ring-2 focus:ring-blue-500 pl-10"
           style="background-color: white; border-color: #474b4f; color: #1d1b21;"
         />
@@ -1581,7 +1808,7 @@
         {t('searchTip', lang) || `Astuce: Utilisez !shared pour voir les mots de passe partagés avec vous, !sharedbyme pour ceux que vous avez partagés.`}
       </div>
       <!-- Boutons de filtre -->
-      <div class="flex space-x-2 mt-2">
+      <div class="flex flex-wrap gap-2 mt-2">
         <button
           on:click={() => {
             if (searchTerm.includes("!s")) {
@@ -1651,9 +1878,9 @@
       </button>
       <input 
         type="file" 
-        accept=".json" 
+        accept=".json,.csv" 
         style="display: none;" 
-        on:change={importFromJson}
+        on:change={importPasswords}
         bind:this={fileInput}
       />
     </div>
@@ -1756,7 +1983,7 @@
                 />
               </div>
               
-              <div class="grid grid-cols-2 gap-2 mb-3">
+              <div class="grid grid-cols-2 gap-2 mb-3 sm:grid-cols-1">
                 <label class="flex items-center">
                   <input 
                     type="checkbox" 
@@ -1793,7 +2020,7 @@
                   <span class="text-sm" style="color: #474b4f;">{t('symbols', lang) || "Symboles"}</span>
                 </label>
                 
-                <label class="flex items-center col-span-2">
+                <label class="flex items-center col-span-2 sm:col-span-1">
                   <input 
                     type="checkbox" 
                     bind:checked={passwordConfig.excludeSimilarChars}
@@ -1803,7 +2030,7 @@
                 </label>
               </div>
               
-              <div class="flex space-x-2">
+              <div class="flex flex-wrap gap-2">
                 <button
                   type="button"
                   on:click={() => {
@@ -1844,10 +2071,10 @@
             style="border-color: #474b4f;"
           />
         </div>
-        <div class="flex space-x-2 mt-4">
+        <div class="flex flex-wrap gap-2 mt-4">
           <button
             on:click={saveNewCredential}
-            class="secondary-btn px-4 py-2 rounded-lg"
+            class="secondary-btn px-4 py-2 rounded-lg flex-1"
           >
             {t('save', lang)}
           </button>
@@ -1864,7 +2091,7 @@
               showAddForm = false;
               showPasswordGenerator = false;
             }}
-            class="neutral-btn px-4 py-2 rounded-lg"
+            class="neutral-btn px-4 py-2 rounded-lg flex-1"
           >
             {t('cancel', lang)}
           </button>
@@ -1873,20 +2100,20 @@
     {/if}
     {#each $pendingCredentialsStore as pendingCredential}
       <div class="card p-4 mb-4">
-        <div class="flex justify-between items-start">
-          <div>
-            <h3 class="text-lg font-semibold flex items-center" style="color: #1d1b21; font-family: 'Raleway', sans-serif;">
+        <div class="flex justify-between items-start flex-col">
+          <div class="w-full">
+            <h3 class="text-lg font-semibold flex items-center flex-wrap gap-2" style="color: #1d1b21; font-family: 'Raleway', sans-serif;">
               {#if pendingCredential.credential.favicon}
-                <img src={pendingCredential.credential.favicon} alt="Favicon" class="w-5 h-5 mr-2" on:error={handleImageError} />
+                <img src={pendingCredential.credential.favicon} alt="Favicon" class="w-5 h-5 mr-1" on:error={handleImageError} />
               {/if}
-              {pendingCredential.credential.service}
-              <span class="text-xs bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full ml-2">
+              <span class="break-all">{pendingCredential.credential.service}</span>
+              <span class="text-xs bg-yellow-200 text-yellow-800 px-2 py-1 rounded-full">
                 {t('pending', lang) || 'En attente'}
               </span>
             </h3>
-            <div class="mt-1 flex items-center">
+            <div class="mt-1 flex items-center flex-wrap">
               <span class="mr-2" style="color: #474b4f;">{t('username', lang)}:</span>
-              <span class="font-medium" style="color: #1d1b21;">{pendingCredential.credential.username}</span>
+              <span class="font-medium break-all" style="color: #1d1b21;">{pendingCredential.credential.username}</span>
             </div>
             <div class="mt-2 text-sm text-purple-700">
               {t('sharedBy', lang)} {pendingCredential.owneremail}
@@ -1897,7 +2124,7 @@
           </div>
         </div>
         
-        <div class="flex space-x-3 mt-4">
+        <div class="flex flex-wrap gap-2 mt-4">
           <button
             on:click={() => handleAcceptSharedPass(pendingCredential.credential)}
             class="secondary-btn px-4 py-2 rounded-lg flex-1"
@@ -2007,7 +2234,7 @@
                   />
                 </div>
                 
-                <div class="grid grid-cols-2 gap-2 mb-3">
+                <div class="grid grid-cols-2 gap-2 mb-3 sm:grid-cols-1">
                   <label class="flex items-center">
                     <input 
                       type="checkbox" 
@@ -2044,7 +2271,7 @@
                     <span class="text-sm" style="color: #474b4f;">{t('symbols', lang) || "Symboles"}</span>
                   </label>
                   
-                  <label class="flex items-center col-span-2">
+                  <label class="flex items-center col-span-2 sm:col-span-1">
                     <input 
                       type="checkbox" 
                       bind:checked={passwordConfig.excludeSimilarChars}
@@ -2054,7 +2281,7 @@
                   </label>
                 </div>
                 
-                <div class="flex space-x-2">
+                <div class="flex flex-wrap gap-2">
                   <button
                     type="button"
                     on:click={() => {
@@ -2095,49 +2322,51 @@
               style="border-color: #474b4f;"
             />
           </div>
-          <div class="flex space-x-2 mt-4">
+          <div class="flex flex-wrap gap-2 mt-4">
             <button
               on:click={saveEdit}
-              class="secondary-btn px-4 py-2 rounded-lg"
+              class="secondary-btn px-4 py-2 rounded-lg flex-1"
             >
               {t('save', lang)}
             </button>
             <button
               on:click={deleteEdit}
-              class="danger-btn px-4 py-2 rounded-lg"
+              class="danger-btn px-4 py-2 rounded-lg flex-1"
             >
               {t('delete', lang)}
             </button>
             <button
               on:click={cancelEdit}
-              class="neutral-btn px-4 py-2 rounded-lg"
+              class="neutral-btn px-4 py-2 rounded-lg flex-1"
             >
               {t('cancel', lang)}
             </button>
           </div>
         {:else}
           <!-- View Mode -->
-          <div class="flex justify-between items-start">
-            <div>
-              <h3 class="text-lg font-semibold flex items-center" style="color: #1d1b21; font-family: 'Raleway', sans-serif;">
+          <div class="flex justify-between items-start flex-col sm:flex-row">
+            <div class="w-full sm:w-auto">
+              <h3 class="text-lg font-semibold flex items-center flex-wrap gap-2" style="color: #1d1b21; font-family: 'Raleway', sans-serif;">
                 {#if credential.favicon}
-                  <img src={credential.favicon} alt="Favicon" class="w-5 h-5 mr-2" on:error={handleImageError} />
+                  <img src={credential.favicon} alt="Favicon" class="w-5 h-5 mr-1" on:error={handleImageError} />
                 {/if}
-                {credential.service}
-                {#if credential.sharedBy}
-                  <span class="text-xs bg-purple-200 text-purple-800 px-2 py-1 rounded-full ml-2">
-                    {t('shared', lang)}
-                  </span>
-                {/if}
-                {#if !credential.sharedBy && sharedPasswordEmails.has(credential.uuid) && getSharedEmails(credential.uuid).length > 0}
-                  <span class="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded-full ml-2">
-                    {t('sharedByMe', lang)}
-                  </span>
-                {/if}
+                <span class="break-all">{credential.service}</span>
+                <div class="flex flex-wrap gap-1">
+                  {#if credential.sharedBy}
+                    <span class="text-xs bg-purple-200 text-purple-800 px-2 py-1 rounded-full">
+                      {t('shared', lang)}
+                    </span>
+                  {/if}
+                  {#if !credential.sharedBy && sharedPasswordEmails.has(credential.uuid) && getSharedEmails(credential.uuid).length > 0}
+                    <span class="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded-full">
+                      {t('sharedByMe', lang)}
+                    </span>
+                  {/if}
+                </div>
               </h3>
-              <div class="mt-1 flex items-center">
+              <div class="mt-1 flex items-center flex-wrap">
                 <span class="mr-2" style="color: #474b4f;">{t('username', lang)}:</span>
-                <span class="font-medium" style="color: #1d1b21;">{credential.username.length > 40 ? credential.username.slice(0, 40) + "..." : credential.username}</span>
+                <span class="font-medium break-all" style="color: #1d1b21;">{credential.username.length > 40 ? credential.username.slice(0, 40) + "..." : credential.username}</span>
                 <button
                   on:click={() => copyText(credential.username)}
                   class="ml-2 text-blue-500 hover:text-blue-700 copy-btn"
@@ -2189,8 +2418,8 @@
                 </div>
               {/if}
             </div>
-            <div class="flex flex-col items-end space-y-2">
-              <div class="flex space-x-2">
+            <div class="flex flex-col items-start sm:items-end space-y-2 mt-3 sm:mt-0 w-full sm:w-auto">
+              <div class="flex space-x-2 w-full sm:w-auto justify-start sm:justify-end">
                 {#if !credential.sharedBy}
                   <button
                     on:click={() => startEdit(credential)}
@@ -2262,9 +2491,9 @@
               
               {#if credential.otp}
                 {#if credential.twoFA}
-                  <div class="flex items-center mt-2">
-                    <span class="mr-2" style="color: #474b4f;">{t('twoFaCode', lang)}</span>
-                    <span class="font-mono px-2 py-1 rounded mr-2" style="background-color: #f2c3c2; color: #1d1b21;">
+                  <div class="flex items-center flex-wrap gap-2 mt-2 w-full sm:w-auto justify-start sm:justify-end">
+                    <span style="color: #474b4f;">{t('twoFaCode', lang)}</span>
+                    <span class="font-mono px-2 py-1 rounded" style="background-color: #f2c3c2; color: #1d1b21;">
                       {credential.twoFA}
                     </span>
                                         
@@ -2279,7 +2508,7 @@
                       {@const circleColor = isLow ? "#b00e0b" : "#a7f3ae"}
                       {@const textColor = isLow ? "#ffffff" : "#1d1b21"}
                       {@const bgColor = isLow ? "rgba(176, 14, 11, 0.2)" : "transparent"}
-                      <div class="ml-2 mr-2 relative w-10 h-10 {isVeryLow ? 'pulse-animation' : ''}">
+                      <div class="relative w-10 h-10 {isVeryLow ? 'pulse-animation' : ''}">
                         <svg class="w-10 h-10" viewBox="0 0 36 36">
                           <circle cx="18" cy="18" r="16" fill={bgColor} stroke="#e0e0e0" stroke-width="2"></circle>
                           <circle 
@@ -2335,7 +2564,7 @@
                 {/if}
                 <button
                   on:click={() => toggle2FA(credential)}
-                  class="text-sm px-2 py-1 rounded"
+                  class="text-sm px-2 py-1 rounded w-full sm:w-auto text-center"
                   style="background-color: #a7f3ae; color: #1d1b21;"
                 >
                   {credential.twoFA ? t('disableTwoFa', lang) : t('enableTwoFa', lang)}
@@ -2356,18 +2585,18 @@
 
 <!-- Modal de partage -->
 {#if showingShareModal}
-  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-    <div class="card p-6 w-full max-w-md">
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div class="card p-4 sm:p-6 w-full max-w-md mx-auto">
       <h2 class="text-xl font-semibold mb-4" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">{t('sharePassword', lang)}</h2>
-      <p class="mb-4" style="color: #474b4f;">{t('shareDescription', lang)}</p>
+      <p class="mb-4 text-sm sm:text-base" style="color: #474b4f;">{t('shareDescription', lang)}</p>
       
       <div class="mb-4">
-        <label for="shareUserId" class="block font-medium mb-1" style="color: #1d1b21;">{t('email', lang)}</label>
+        <label for="shareUserId" class="block font-medium mb-1 text-sm sm:text-base" style="color: #1d1b21;">{t('email', lang)}</label>
         <input
           type="email"
           id="shareUserId"
           bind:value={shareUserId}
-          class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2"
+          class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 text-sm sm:text-base"
           style="border-color: #474b4f;"
           placeholder={t('emailPlaceholder', lang)}
           required
@@ -2375,7 +2604,7 @@
       </div>
       
       {#if shareError}
-        <p class="text-red-500 mb-4 text-sm">{shareError}</p>
+        <p class="text-red-500 mb-4 text-xs sm:text-sm">{shareError}</p>
       {/if}
       
       <!-- Afficher les emails avec lesquels ce mot de passe a déjà été partagé -->
@@ -2384,22 +2613,22 @@
           <h3 class="text-sm font-medium mb-2" style="color: #1d1b21;">{t('alreadySharedWith', lang)}</h3>
           <ul class="p-2 rounded-md max-h-32 overflow-y-auto" style="background-color: #1d1b21;">
             {#each sharedPasswordEmails.get(sharingCredential.uuid)?.emails || [] as email, index}
-              <li class="flex justify-between items-center text-sm py-1 px-2 border-b border-zinc-700 last:border-b-0">
-                <div class="flex items-center">
+              <li class="flex justify-between items-center text-sm py-1 px-2 border-b border-zinc-700 last:border-b-0 flex-wrap gap-1">
+                <div class="flex items-center flex-wrap gap-1 break-all">
                   <span style="color: #ced7e1;">{email}</span>
                   
                   <!-- Afficher le statut du partage -->
                   {#if sharedPasswordEmails.get(sharingCredential.uuid)?.statuses && index < (sharedPasswordEmails.get(sharingCredential.uuid)?.statuses?.length || 0)}
                     {#if sharedPasswordEmails.get(sharingCredential.uuid)?.statuses?.[index] === ShareStatus.Pending}
-                      <span class="ml-2 text-xs bg-yellow-200 text-yellow-800 px-2 py-0.5 rounded-full">
+                      <span class="text-xs bg-yellow-200 text-yellow-800 px-2 py-0.5 rounded-full">
                         {t('pending', lang) || 'En attente'}
                       </span>
                     {:else if sharedPasswordEmails.get(sharingCredential.uuid)?.statuses?.[index] === ShareStatus.Accepted}
-                      <span class="ml-2 text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full">
+                      <span class="text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full">
                         {t('accepted', lang) || 'Accepté'}
                       </span>
                     {:else if sharedPasswordEmails.get(sharingCredential.uuid)?.statuses?.[index] === ShareStatus.Rejected}
-                      <span class="ml-2 text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded-full">
+                      <span class="text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded-full">
                         {t('rejected', lang) || 'Rejeté'}
                       </span>
                     {/if}
@@ -2425,10 +2654,10 @@
         </div>
       {/if}
       
-      <div class="flex justify-end space-x-2">
+      <div class="flex flex-wrap gap-2 justify-end">
         <button
         on:click={sharePassword}
-        class="secondary-btn px-4 py-2 rounded-md flex items-center"
+        class="secondary-btn px-4 py-2 rounded-md flex items-center flex-1 sm:flex-none justify-center"
         disabled={isSharing}
         >
           {#if isSharing}
@@ -2440,7 +2669,7 @@
         </button>
         <button
           on:click={closeShareModal}
-          class="primary-btn px-4 py-2 rounded-md"
+          class="primary-btn px-4 py-2 rounded-md flex-1 sm:flex-none text-center"
         >
           {t('cancel', lang)}
         </button>
@@ -2458,17 +2687,17 @@
 
 <!-- Modal d'importation -->
 {#if importingFile}
-  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-    <div class="card p-6 w-full max-w-md">
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div class="card p-4 sm:p-6 w-full max-w-md mx-auto">
       <h2 class="text-xl font-semibold mb-4" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">{t('importing', lang)}</h2>
       <div class="w-full bg-gray-200 rounded-full h-4 mb-4">
         <div class="bg-green-500 h-4 rounded-full" style="width: {(importProgress / importTotal) * 100}%"></div>
       </div>
-      <p class="text-center" style="color: #474b4f;">
+      <p class="text-center text-sm sm:text-base" style="color: #474b4f;">
         {importProgress} {t('importedOf', lang)} {importTotal} {t('passwordsImported', lang)}
       </p>
       {#if importError}
-        <p class="text-red-500 mt-2 text-sm">{importError}</p>
+        <p class="text-red-500 mt-2 text-xs sm:text-sm">{importError}</p>
       {/if}
     </div>
   </div>

@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:3030",
+        target: "https://skap.klyt.eu",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },

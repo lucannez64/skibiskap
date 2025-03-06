@@ -40,6 +40,7 @@
     "@noble/ciphers": "^1.2.1",
     "@noble/hashes": "^1.7.1",
     "@noble/post-quantum": "^0.4.0",
+    "@sveltejs/adapter-static": "^3.0.8",
     "@zxcvbn-ts/core": "^3.0.4",
     "@zxcvbn-ts/language-common": "^3.0.4",
     "@zxcvbn-ts/matcher-pwned": "^3.0.4",

@@ -8,27 +8,25 @@
   import SecureLS from "secure-ls";
 
   let language: "fr" | "en" = "en";
-//  if (navigator.language == "fr" || navigator.language == "en") {
-//    language = navigator.language;
-//  }
+
 
   // Define the validation schema with Zod.
   const loginFormSchema = z.object({
     email: z.string().email({
-      message: language === "fr" 
+      message: (language as "fr" | "en") === "fr" 
         ? "Veuillez entrer une adresse email valide." 
         : "Please enter a valid email address.",
     }),
     file: z
       .instanceof(File)
-      .refine((file) => file.size <= 5000000, language === "fr" 
+      .refine((file) => file.size <= 5000000, (language as "fr" | "en") === "fr" 
         ? "Taille maximale du fichier: 5MB." 
         : "Maximum file size: 5MB."),
   });
 
   const registerFormSchema = z.object({
     email: z.string().email({
-      message: language === "fr" 
+      message: (language as "fr" | "en") === "fr" 
         ? "Veuillez entrer une adresse email valide." 
         : "Please enter a valid email address.",
     }),
@@ -293,27 +291,28 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
   <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700&family=Work+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 </svelte:head>
 
-<div class="flex items-center justify-center min-h-screen" style="background-color: #1d1b21; font-family: 'Work Sans', sans-serif;">
+<div class="flex items-center justify-center min-h-screen px-4 py-8 sm:px-6 md:py-12" style="background-color: #1d1b21; font-family: 'Work Sans', sans-serif;">
   <!-- Language Selector -->
-  <div class="absolute top-4 right-4">
+  <div class="absolute top-4 right-4 z-10">
     <button 
       on:click={toggleLanguage}
-      class="px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ease-in-out"
+      class="px-2 py-1 sm:px-3 sm:py-1 rounded-md text-xs sm:text-sm font-medium transition-all duration-200 ease-in-out"
       style="background-color: #474b4f; color: white;"
     >
       {language === "fr" ? "Français" : "English"}
     </button>
   </div>
 
-  <div class="w-full max-w-md rounded-[0.5rem] shadow-lg overflow-hidden" style="background-color: #ced7e1;">
+  <div class="w-full max-w-xs sm:max-w-sm md:max-w-md rounded-[0.5rem] shadow-lg overflow-hidden mx-auto" style="background-color: #ced7e1;">
     <!-- Card Header -->
-    <div class="p-6 border-b" style="border-color: #474b4f;">
-      <h2 class="text-[2.125rem] font-bold mb-2" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">
+    <div class="p-3 sm:p-4 md:p-6 border-b" style="border-color: #474b4f;">
+      <h2 class="text-lg sm:text-xl md:text-2xl lg:text-[2.125rem] font-bold mb-1 sm:mb-2" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">
         {showRegisterForm ? translations[language].createAccount : translations[language].login}
       </h2>
-      <p class="text-[0.8125rem]" style="color: #474b4f;">
+      <p class="text-xs sm:text-[0.8125rem]" style="color: #474b4f;">
         {showRegisterForm 
           ? translations[language].createAccountDesc
           : translations[language].loginDesc}
@@ -321,13 +320,13 @@
     </div>
 
     <!-- Card Content (Form) -->
-    <div class="p-6">
+    <div class="p-3 sm:p-4 md:p-6">
       {#if !showRegisterForm}
         <!-- Login Form -->
-        <form on:submit={onLoginSubmit} class="space-y-6">
+        <form on:submit={onLoginSubmit} class="space-y-3 sm:space-y-4 md:space-y-6">
           <!-- Email Field -->
           <div>
-            <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="email">
+            <label class="block text-xs sm:text-sm md:text-[0.875rem] font-medium mb-1 sm:mb-2" style="color: #1d1b21;" for="email">
               {translations[language].email}
             </label>
             <input
@@ -335,17 +334,17 @@
               type="email"
               bind:value={email}
               placeholder="example@email.com"
-              class="mt-1 block w-full border p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
+              class="mt-1 block w-full border p-2 sm:p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
               style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
             />
             {#if errors.email}
-              <p class="mt-2 text-[0.8125rem]" style="color: #b00e0b;">{errors.email}</p>
+              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #b00e0b;">{errors.email}</p>
             {/if}
           </div>
 
           <!-- File Upload Field -->
           <div>
-            <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="file">
+            <label class="block text-xs sm:text-sm md:text-[0.875rem] font-medium mb-1 sm:mb-2" style="color: #1d1b21;" for="file">
               {translations[language].keyFile}
             </label>
             <div class="relative">
@@ -353,14 +352,14 @@
                 id="file"
                 type="file"
                 on:change={handleFileChange}
-                class="block w-full text-[0.8125rem] file:mr-4 file:py-2 file:px-4
-                      file:rounded-[0.21428571428571427rem] file:border-0 file:text-[0.8125rem] file:font-semibold
+                class="block w-full text-xs sm:text-[0.8125rem] file:mr-2 sm:file:mr-4 file:py-1 sm:file:py-2 file:px-2 sm:file:px-4
+                      file:rounded-[0.21428571428571427rem] file:border-0 file:text-xs sm:file:text-[0.8125rem] file:font-semibold
                       hover:file:opacity-90 cursor-pointer"
                 style="color: #474b4f; file-background-color: #f2c3c2; file-color: #1d1b21;"
               />
             </div>
             {#if errors.file}
-              <p class="mt-2 text-[0.8125rem]" style="color: #b00e0b;">{errors.file}</p>
+              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #b00e0b;">{errors.file}</p>
             {/if}
           </div>
 
@@ -369,7 +368,7 @@
             name="login"
             type="submit"
             disabled={isLoading}
-            class="w-full py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
+            class="w-full py-2 sm:py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-xs sm:text-sm md:text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
             style="background-color: #f2c3c2; color: #1d1b21; font-family: 'Raleway', sans-serif; focus-ring-color: #a7f3ae;"
           >
             {isLoading ? translations[language].loading : translations[language].connect}
@@ -377,21 +376,21 @@
 
           <!-- Status Messages -->
           {#if submitStatus === "success"}
-            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #a7f3ae; color: #1d1b21;">
+            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #a7f3ae; color: #1d1b21;">
               {translations[language].loginSuccess}
             </div>
           {:else if submitStatus === "error"}
-            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
+            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
               {translations[language].loginError}
             </div>
           {/if}
         </form>
       {:else}
         <!-- Register Form -->
-        <form on:submit={onRegisterSubmit} class="space-y-6">
+        <form on:submit={onRegisterSubmit} class="space-y-3 sm:space-y-4 md:space-y-6">
           <!-- Email Field -->
           <div>
-            <label class="block text-[0.875rem] font-medium mb-2" style="color: #1d1b21;" for="registerEmail">
+            <label class="block text-xs sm:text-sm md:text-[0.875rem] font-medium mb-1 sm:mb-2" style="color: #1d1b21;" for="registerEmail">
               {translations[language].email}
             </label>
             <input
@@ -399,11 +398,11 @@
               type="email"
               bind:value={registerEmail}
               placeholder="example@email.com"
-              class="mt-1 block w-full border p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
+              class="mt-1 block w-full border p-2 sm:p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
               style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
             />
             {#if registerErrors.email}
-              <p class="mt-2 text-[0.8125rem]" style="color: #b00e0b;">{registerErrors.email}</p>
+              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #b00e0b;">{registerErrors.email}</p>
             {/if}
           </div>
 
@@ -412,7 +411,7 @@
             type="submit"
             disabled={isLoading}
             name="register"
-            class="w-full py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
+            class="w-full py-2 sm:py-3 px-4 border-0 rounded-[0.35714285714285715rem] shadow-md text-xs sm:text-sm md:text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-90 focus:outline-none focus:ring-2 disabled:opacity-50"
             style="background-color: #a7f3ae; color: #1d1b21; font-family: 'Raleway', sans-serif; focus-ring-color: #f2c3c2;"
           >
             {isLoading ? translations[language].creating : translations[language].create}
@@ -420,11 +419,11 @@
 
           <!-- Status Messages -->
           {#if registerStatus === "success"}
-            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #a7f3ae; color: #1d1b21;">
+            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #a7f3ae; color: #1d1b21;">
               {registerMessage}
             </div>
           {:else if registerStatus === "error"}
-            <div class="mt-4 p-3 rounded-[0.35714285714285715rem] text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
+            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
               {translations[language].registerError} {registerMessage}
             </div>
           {/if}
@@ -432,10 +431,10 @@
       {/if}
 
       <!-- Toggle Form Link -->
-      <div class="mt-6 text-center">
+      <div class="mt-3 sm:mt-4 md:mt-6 text-center">
         <button
           on:click={toggleForm}
-          class="text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-80 focus:outline-none"
+          class="text-xs sm:text-sm md:text-[0.875rem] font-medium transition-all duration-200 ease-in-out hover:opacity-80 focus:outline-none"
           style="color: #1d1b21; font-family: 'Raleway', sans-serif;"
         >
           {showRegisterForm 
@@ -470,5 +469,78 @@
   button[name="register"]:focus {
     outline: none;
     box-shadow: 0 0 0 2px #866b6b;
+  }
+  
+  /* Responsive styles */
+  @media (max-width: 640px) {
+    input[type="file"]::file-selector-button {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.75rem;
+    }
+    
+    input[type="email"] {
+      font-size: 0.875rem;
+      padding: 0.375rem 0.75rem;
+    }
+    
+    button[type="submit"] {
+      font-size: 0.875rem;
+      padding: 0.375rem 0.75rem;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    input[type="file"]::file-selector-button {
+      padding: 0.2rem 0.4rem;
+      font-size: 0.7rem;
+    }
+    
+    input[type="email"] {
+      font-size: 0.8rem;
+      padding: 0.3rem 0.6rem;
+    }
+    
+    button[type="submit"] {
+      font-size: 0.8rem;
+      padding: 0.3rem 0.6rem;
+    }
+  }
+  
+  @media (max-width: 360px) {
+    input[type="file"]::file-selector-button {
+      padding: 0.15rem 0.3rem;
+      font-size: 0.65rem;
+    }
+    
+    input[type="email"] {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+    }
+    
+    button[type="submit"] {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+    }
+  }
+  
+  /* Amélioration pour les appareils tactiles */
+  @media (hover: none) {
+    button, input[type="file"]::file-selector-button {
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
+    }
+  }
+  
+  /* Orientation landscape pour les mobiles */
+  @media (max-height: 480px) and (orientation: landscape) {
+    .min-h-screen {
+      min-height: 100%;
+      padding-top: 1rem;
+      padding-bottom: 1rem;
+    }
+    
+    .space-y-3 > * + *, .space-y-4 > * + *, .space-y-6 > * + * {
+      margin-top: 0.5rem;
+    }
   }
 </style>
