@@ -11,7 +11,7 @@ export type Otp = {
 export function from_uri(uri: string) {
   const parts = new URL(uri);
   const queryObject = Object.fromEntries(parts.searchParams.entries());
-  if (parts.host != "totp") return null;
+  if (!uri.includes("totp")) return null;
   if (!queryObject.secret) return null;
   const algorithm = queryObject.algorithm ? queryObject.algorithm : "SHA1";
   const digits = parseInt(queryObject.digits ? queryObject.digits : "6");
