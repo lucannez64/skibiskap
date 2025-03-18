@@ -12,16 +12,11 @@
 
   // Define the validation schema with Zod.
   const loginFormSchema = z.object({
-    email: z.string().email({
-      message: (language as "fr" | "en") === "fr" 
-        ? "Veuillez entrer une adresse email valide." 
-        : "Please enter a valid email address.",
-    }),
     file: z
       .instanceof(File)
-      .refine((file) => file.size <= 5000000, (language as "fr" | "en") === "fr" 
-        ? "Taille maximale du fichier: 5MB." 
-        : "Maximum file size: 5MB."),
+      .refine((file) => file.size <= 17000, (language as "fr" | "en") === "fr" 
+        ? "Taille maximale du fichier: 17Ko." 
+        : "Maximum file size: 17KB."),
   });
 
   const registerFormSchema = z.object({
@@ -70,7 +65,7 @@
       login: "Connexion",
       createAccount: "Créer un compte",
       createAccountDesc: "Créez un compte pour commencer à utiliser l'application.",
-      loginDesc: "Entrez votre email et téléchargez votre fichier de clé pour vous connecter.",
+      loginDesc: "Entrez téléchargez votre fichier de clé pour vous connecter.",
       email: "Email",
       keyFile: "Fichier de clé",
       loading: "Chargement...",
@@ -89,7 +84,7 @@
       login: "Login",
       createAccount: "Create Account",
       createAccountDesc: "Create an account to start using the application.",
-      loginDesc: "Enter your email and upload your key file to log in.",
+      loginDesc: "Enter upload your key file to log in.",
       email: "Email",
       keyFile: "Key File",
       loading: "Loading...",
@@ -139,8 +134,6 @@
     const result = loginFormSchema.safeParse({ email, file });
     if (!result.success) {
       const zodErrors = result.error.flatten();
-      if (zodErrors.fieldErrors.email)
-        errors.email = zodErrors.fieldErrors.email.join(", ");
       if (zodErrors.fieldErrors.file)
         errors.file = zodErrors.fieldErrors.file.join(", ");
       return;
@@ -151,7 +144,7 @@
     // Decode the file using decodeClientEx function.
     const arrayBuffer = await file!.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
-    const decodedFile = await decodeClientEx(uint8Array);
+    const decodedFile = decodeClientEx(uint8Array);
     console.log(decodedFile);
     
     if (!decodedFile || !decodedFile.id || !decodedFile.id.id || !decodedFile.c) {
@@ -324,24 +317,6 @@
       {#if !showRegisterForm}
         <!-- Login Form -->
         <form on:submit={onLoginSubmit} class="space-y-3 sm:space-y-4 md:space-y-6">
-          <!-- Email Field -->
-          <div>
-            <label class="block text-xs sm:text-sm md:text-[0.875rem] font-medium mb-1 sm:mb-2" style="color: #1d1b21;" for="email">
-              {translations[language].email}
-            </label>
-            <input
-              id="email"
-              type="email"
-              bind:value={email}
-              placeholder="example@email.com"
-              class="mt-1 block w-full border p-2 sm:p-3 rounded-[0.35714285714285715rem] focus:outline-none focus:ring-2"
-              style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
-            />
-            {#if errors.email}
-              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #b00e0b;">{errors.email}</p>
-            {/if}
-          </div>
-
           <!-- File Upload Field -->
           <div>
             <label class="block text-xs sm:text-sm md:text-[0.875rem] font-medium mb-1 sm:mb-2" style="color: #1d1b21;" for="file">
