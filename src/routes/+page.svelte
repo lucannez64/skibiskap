@@ -334,7 +334,7 @@
               />
             </div>
             {#if errors.file}
-              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #b00e0b;">{errors.file}</p>
+              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #e53e3e;">{errors.file}</p>
             {/if}
           </div>
 
@@ -355,7 +355,7 @@
               {translations[language].loginSuccess}
             </div>
           {:else if submitStatus === "error"}
-            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
+            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #e53e3e96; color: #1d1b21;">
               {translations[language].loginError}
             </div>
           {/if}
@@ -377,7 +377,7 @@
               style="background-color: white; border-color: #474b4f; color: #1d1b21; font-family: 'Work Sans', sans-serif; font-size: 0.875rem; focus-ring-color: #f2c3c2;"
             />
             {#if registerErrors.email}
-              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #b00e0b;">{registerErrors.email}</p>
+              <p class="mt-1 sm:mt-2 text-xs sm:text-[0.8125rem]" style="color: #e53e3e;">{registerErrors.email}</p>
             {/if}
           </div>
 
@@ -398,7 +398,7 @@
               {registerMessage}
             </div>
           {:else if registerStatus === "error"}
-            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #b00e0b96; color: #1d1b21;">
+            <div class="mt-3 sm:mt-4 p-2 sm:p-3 rounded-[0.35714285714285715rem] text-xs sm:text-[0.8125rem]" style="background-color: #e53e3e96; color: #1d1b21;">
               {translations[language].registerError} {registerMessage}
             </div>
           {/if}

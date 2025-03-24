@@ -11,6 +11,8 @@ export const translations = {
     vault: "Coffre-fort",
     logout: "Déconnexion",
     search: "Rechercher des identifiants...",
+    language: "Langue",
+    profile: "Profil",
     
     // Formulaire d'ajout
     service: "Service",
@@ -126,15 +128,51 @@ export const translations = {
     uppercase: "Majuscules",
     lowercase: "Minuscules",
     numbers: "Chiffres",
-    symbols: "Symboles"
+    symbols: "Symboles",
+    
+    // Menu contextuel
+    copyUsername: "Copier le nom d'utilisateur",
+    copyPassword: "Copier le mot de passe",
+    copyToClipboard: "Copier le code",
+    edit: "Modifier",
+    
+    // Audit des mots de passe
+    auditPasswords: "Audit des mots de passe",
+    passwordAudit: "Audit de sécurité des mots de passe",
+    weakPasswords: "Mots de passe faibles",
+    reusedPasswords: "Mots de passe réutilisés",
+    oldPasswords: "Mots de passe anciens",
+    noWeakPasswords: "Aucun mot de passe faible détecté",
+    noReusedPasswords: "Aucun mot de passe réutilisé détecté",
+    noOldPasswords: "Aucun mot de passe ancien détecté",
+    passwordsStrength: "Force des mots de passe",
+    closeAudit: "Fermer l'audit",
+    startAudit: "Analyser les mots de passe",
+    breachedPasswords: "Mots de passe compromis",
+    noBreachedPasswords: "Aucun mot de passe compromis détecté",
+    breachedPasswordsDescription: "Ces mots de passe ont été trouvés dans des fuites de données connues",
+    overallScore: "Score global de sécurité",
+    excellent: "Excellent",
+    good: "Bon",
+    moderate: "Moyen",
+    poor: "Faible",
+    critical: "Critique",
+    outOf100: "sur 100",
+    checkingBreaches: "Vérification des fuites de données...",
+    passwordsToImprove: "mots de passe à améliorer",
+    totalPasswords: "mots de passe au total",
+    haveibeenpwnedError: "Erreur lors de la vérification des fuites de données",
+    scoreExplanation: "Ce score est calculé en fonction de la faiblesse, de la réutilisation et des compromissions de vos mots de passe."
   },
   en: {
     // Main titles and buttons
     vault: "Vault",
     logout: "Logout",
     search: "Search credentials...",
+    language: "Language",
+    profile: "Profile",
     
-    // Add form
+    // Formulaire d'ajout
     service: "Service",
     username: "Username",
     password: "Password",
@@ -247,7 +285,41 @@ export const translations = {
     uppercase: "Uppercase",
     lowercase: "Lowercase",
     numbers: "Numbers",
-    symbols: "Symbols"
+    symbols: "Symbols",
+    
+    // Context menu
+    copyUsername: "Copy username",
+    copyPassword: "Copy password",
+    copyToClipboard: "Copy code",
+    edit: "Edit",
+    
+    // Password audit
+    auditPasswords: "Password Audit",
+    passwordAudit: "Password Security Audit",
+    weakPasswords: "Weak Passwords",
+    reusedPasswords: "Reused Passwords",
+    oldPasswords: "Old Passwords",
+    noWeakPasswords: "No weak passwords detected",
+    noReusedPasswords: "No reused passwords detected",
+    noOldPasswords: "No old passwords detected",
+    passwordsStrength: "Password Strength",
+    closeAudit: "Close Audit",
+    startAudit: "Analyze Passwords",
+    breachedPasswords: "Breached Passwords",
+    noBreachedPasswords: "No breached passwords detected",
+    breachedPasswordsDescription: "These passwords were found in known data breaches",
+    overallScore: "Overall Security Score",
+    excellent: "Excellent",
+    good: "Good",
+    moderate: "Moderate",
+    poor: "Poor",
+    critical: "Critical",
+    outOf100: "out of 100",
+    checkingBreaches: "Checking for data breaches...",
+    passwordsToImprove: "passwords to improve",
+    totalPasswords: "total passwords",
+    haveibeenpwnedError: "Error checking for data breaches",
+    scoreExplanation: "This score is calculated based on the weakness, reuse, and compromises of your passwords."
   }
 };
 

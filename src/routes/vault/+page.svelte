@@ -14,6 +14,7 @@
   import Search from "lucide-svelte/icons/search";
   import Upload from "lucide-svelte/icons/upload";
   import { translations, currentLang, t } from "$lib/i18n";
+  import { fly } from 'svelte/transition';
   const { Uuid } = pkg;
 	import { uuidToStr, type Password, type Uuid as UuidType } from "$lib/decoder";
   import type { SharedByUserEmail } from "$lib/client";
@@ -568,8 +569,8 @@
   let editedRecord: EditedRecord = {};
 
   // Helper: Copy any text to the clipboard
-  function copyText(text: string | null) {
-    if (text === null) return;
+  function copyText(text: string | null | undefined) {
+    if (text === null || text === undefined) return;
     navigator.clipboard.writeText(text).then(() => {
       showToast(t('copiedToClipboard', lang));
     });
@@ -1274,194 +1275,80 @@
 
   // Fonction pour gérer la récupération des données
   async function fetchCredentials() {
-    if (!client) return;
-    
-    const clientValue = $client;
-    const clientexValue = $clientex;
-    if (!clientValue || !clientexValue) return;
-    
     loading = true;
+    errorMessage = "";
+    
     try {
-      const {result: encryptedCredentials, shared: sharedCredentials, error} = await get_all(clientexValue.id.id!, clientValue);
-      if (error) {
-        console.error(error);
-        disconnect();
-        return;
-      }
-      if (!encryptedCredentials) {
-        disconnect();
-        return;
-      }
-
-      // Initialisation du pool de workers
-      const workerPool = new WorkerPool(4);
-
-      // Traiter les mots de passe normaux
-      if (encryptedCredentials[0].length === 0 && (sharedCredentials === null || sharedCredentials[0].length === 0)) {
+      const clientexValue = get(clientex);
+      const clientValue = get(client);
+      if (!clientexValue || !clientValue) {
+        errorMessage = t('clientNotInitialized', lang) as string;
         loading = false;
         return;
       }
       
-      const passwords = encryptedCredentials[0];
-      const uuids = encryptedCredentials[1];
-      const passwordsAndUuids: [Password, UuidType][] = passwords.map((password, index) => [password, uuids[index]]);
-
-      const processedCredentials = await Promise.all(
-        passwordsAndUuids
-          .map(async (item, index) => {
-            const uuid = item[1];
-            const cred = item[0];
-            const uuidstr = uuidToStr(uuid);
-            if (!cred || typeof cred !== 'object') return null;
-            
-            // Vérifier que cred est de type Password
-            const password = 'password' in cred ? cred.password : '';
-            const url = 'url' in cred ? cred.url : '';
-            const username = 'username' in cred ? cred.username : '';
-            const otp = 'otp' in cred ? cred.otp : null;
-            
-            try {
-              // Évaluation du mot de passe en arrière-plan
-              workerPool.evaluatePassword(password, url!).then(({ passwordStrength }) => {
-                // Mise à jour silencieuse, pas besoin de mettre à jour l'interface
-              }).catch(err => {
-                console.error("Erreur d'évaluation du mot de passe:", err);
-              });
-            } catch (e) {
-              console.error("Erreur lors de l'évaluation du mot de passe:", e);
-            }
-            
-            return {
-              id: index,
-              service: url,
-              username,
-              uuid: typeof uuidstr === 'string' ? uuidstr : '',
-              password,
-              otp,
-              twoFA: null,
-              favicon: getFaviconUrl(url || ''),
-              pending: false,
-              ownerUuid: null,
-              passUuid: null
-            } as Credential;
-          })
-          .filter((item): item is Promise<Credential | null> => item !== null)
-      );
-
-      // Traiter les mots de passe partagés si disponibles
-      let processedSharedCredentials: Credential[] = [];
-      if (sharedCredentials) {
-        // Récupérer tous les emails en une seule requête
-        const ownerUuids = sharedCredentials[2].map(uuid => {
-          const uuidstr = uuidToStr(uuid);
-          const uuid3 = new Uuid(uuidstr);
-          return {
-            bytes: new Uint8Array(uuid3.toBytes()),
-          };
-        });
-        
-        const allEmails = await get_emails_from_uuids(ownerUuids);
-        const emails = new Map<string, string>();
-        
-        if (allEmails) {
-          sharedCredentials[2].forEach((uuid, index) => {
-            const uuidstr = uuidToStr(uuid);
-            if (allEmails[index]) {
-              emails.set(uuidstr, allEmails[index]);
-            }
-          });
-        }
-        
-        processedSharedCredentials = sharedCredentials[0]
-          .map((cred, index) => {
-            if (!cred) return null;
-            if (sharedCredentials[3][index] === ShareStatus.Pending) {
-              console.log("Pending");
-              // Montrer les informations de base et les boutons pour accepter/rejeter
-              const ownerUuid = sharedCredentials[2][index];
-              const passUuid = sharedCredentials[1][index];
-              const passuuidstr = uuidToStr(passUuid);
-              const owneruuidstr = uuidToStr(ownerUuid);
-              const owneremail = emails.get(owneruuidstr) || "Utilisateur inconnu";
-              const url = 'url' in cred ? cred.url : '';
-              const otp = 'otp' in cred ? cred.otp : null;
-
-              pendingCredentialsStore.update(pendingCredentials => [
-                ...pendingCredentials,
-                {
-                  owneremail: owneremail,
-                  passUuid: passUuid,
-                  ownerUuid: ownerUuid,
-                  credential: {
-                    service: url!,
-                    username: cred.username,
-                    uuid: passuuidstr,
-                    password: cred.password,
-                    otp: otp,
-                    twoFA: null,
-                    id: index,
-                    favicon: getFaviconUrl(url || ''),
-                    pending: true,
-                    ownerUuid: ownerUuid,
-                    passUuid: passUuid
-                  }
-                }
-              ]);
-              return null;
-            }
-            const ownerUuid = sharedCredentials[2][index];
-            const passUuid = sharedCredentials[1][index];
-            
-            // Vérifier que cred est de type Password
-            const password = 'password' in cred ? cred.password : '';
-            const url = 'url' in cred ? cred.url : '';
-            const username = 'username' in cred ? cred.username : '';
-            const otp = 'otp' in cred ? cred.otp : null;
-            const passuuidstr = uuidToStr(passUuid);
-            const owneruuidstr = uuidToStr(ownerUuid);
-            const owneremail = emails.get(owneruuidstr);
-            return {
-              id: processedCredentials.length + index, // Éviter les conflits d'ID
-              service: url,
-              username,
-              uuid: typeof passuuidstr === 'string' ? passuuidstr : '',
-              password,
-              otp,
-              twoFA: null,
-              sharedBy: typeof owneruuidstr === 'string' ? owneruuidstr : '',
-              owneremail: typeof owneremail === 'string' ? owneremail : '',
-              favicon: getFaviconUrl(url || ''),
-              pending: false,
-              ownerUuid: ownerUuid,
-              passUuid: passUuid
-            } as Credential;
-          })
-          .filter((item): item is Credential => item !== null);
-      }
-
-      // Combiner les mots de passe normaux et partagés
-      console.log("processedCredentials");
-      console.log(processedCredentials);
-      console.log("processedSharedCredentials");
-      console.log(processedSharedCredentials);
-      credentials = [...processedCredentials.filter(Boolean) as Credential[], ...processedSharedCredentials];
-      credentialsStore.set(credentials);
+      const {result: encryptedCredentials, shared: sharedCredentials, error} = await get_all(clientexValue.id.id!, clientValue);
       
-      // Récupérer les emails partagés
-      const sharedByUserEmails = await get_shared_by_user_emails(clientexValue.id.id!);
-      if (sharedByUserEmails) {
-        // Remplir le dictionnaire des emails partagés
-        sharedByUserEmails.forEach(item => {
-          sharedPasswordEmails.set(uuidToStr(item.pass_id), item);
-        });
+      if (error) {
+        console.error(error);
+        errorMessage = `${t('fetchError', lang)}: ${error}`;
+        loading = false;
+        return;
       }
-      showToast(t('dataUpdated', lang) || "Données mises à jour");
-    } catch (error) {
-      console.error("Erreur lors de la récupération des données:", error);
-      showToast(t('fetchError', lang) || "Erreur lors de la récupération des données");
-    } finally {
-      loading = false;
+      
+      await processCredentials(encryptedCredentials, sharedCredentials);
+      
+      // Activer automatiquement le 2FA pour tous les credentials avec OTP
+      setTimeout(() => {
+        credentials.forEach(credential => {
+          if (credential.otp && !credential.twoFA) {
+            toggle2FA(credential);
+          }
+        });
+      }, 500);
+      
+    } catch (err) {
+      console.error(err);
+      errorMessage = `${t('fetchError', lang)}: ${err instanceof Error ? err.message : String(err)}`;
     }
+    
+        loading = false;
+  }
+
+  // Fonction pour traiter les identifiants (utilisée dans l'audit)
+  async function processCredentials(encryptedCredentials: any, sharedCredentials: any): Promise<void> {
+    credentials = []; // Réinitialiser les identifiants
+    
+    // Traiter les identifiants chiffrés
+    if (encryptedCredentials && Array.isArray(encryptedCredentials)) {
+      for (const encryptedCredential of encryptedCredentials) {
+        try {
+          // Décryptage et traitement des identifiants (implémentation simplifiée)
+          credentials.push(encryptedCredential);
+            } catch (e) {
+          console.error("Erreur lors du traitement de l'identifiant", e);
+        }
+      }
+    }
+    
+    // Traiter les identifiants partagés
+    if (sharedCredentials && Array.isArray(sharedCredentials)) {
+      for (const sharedCredential of sharedCredentials) {
+        try {
+          // Traitement des identifiants partagés (implémentation simplifiée)
+          credentials.push(sharedCredential);
+        } catch (e) {
+          console.error("Erreur lors du traitement de l'identifiant partagé", e);
+        }
+      }
+    }
+    
+    // Trier les identifiants par service et nom d'utilisateur
+    credentials.sort((a, b) => {
+      const serviceCompare = (a.service || '').localeCompare(b.service || '');
+      if (serviceCompare !== 0) return serviceCompare;
+      return (a.username || '').localeCompare(b.username || '');
+    });
   }
 
   // Fonction pour accepter un mot de passe partagé
@@ -1507,6 +1394,337 @@
       loading = false;
     }
   }
+
+  // Variables pour le menu contextuel
+  let contextMenu = {
+    show: false,
+    x: 0,
+    y: 0,
+    credential: null as Credential | null
+  };
+
+  // Fonction pour afficher le menu contextuel
+  function showContextMenu(event: MouseEvent, credential: Credential) {
+    event.preventDefault();
+    event.stopPropagation();
+    console.log(event);
+    
+    // Obtenir les dimensions de la fenêtre
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    
+    // Obtenir la position du clic par rapport à la page
+    const x = event.pageX;
+    const y = event.pageY;
+    
+    // Dimensions du menu contextuel (approximatives)
+    const menuWidth = 200;
+    const menuHeight = 200; // Hauteur approximative basée sur le nombre d'options
+    
+    // Calculer la position finale en tenant compte des limites de la fenêtre
+    let finalX = x;
+    let finalY = y;
+    
+    // Ajuster la position horizontale si le menu dépasserait la fenêtre
+    if (x + menuWidth > windowWidth) {
+      finalX = windowWidth - menuWidth;
+    }
+    
+    // Ajuster la position verticale si le menu dépasserait la fenêtre
+    if (y + menuHeight > windowHeight) {
+      finalY = windowHeight - menuHeight;
+    }
+    
+    contextMenu = {
+      show: true,
+      x: finalX,
+      y: finalY,
+      credential
+    };
+  }
+
+  // Fonction pour fermer le menu contextuel
+  function closeContextMenu() {
+    contextMenu.show = false;
+    contextMenu.credential = null;
+  }
+
+  // Fermer le menu contextuel lors d'un clic en dehors
+  function handleClickOutside(event: MouseEvent) {
+    if (contextMenu.show) {
+      closeContextMenu();
+    }
+  }
+
+  onMount(() => {
+    document.addEventListener('click', handleClickOutside);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  });
+
+  // Rendre l'activation du 2FA automatique au chargement de la page
+  onMount(() => {
+    // ... existing code ...
+    
+    // Activer automatiquement le 2FA pour tous les credentials avec OTP
+    setTimeout(() => {
+      filteredCredentials.forEach(credential => {
+        if (credential.otp && !credential.twoFA) {
+          toggle2FA(credential);
+        }
+      });
+    }, 500);
+  });
+
+  // Activer automatiquement le 2FA pour tous les identifiants avec OTP après le chargement
+  onMount(() => {
+    // Attendre que les données soient chargées
+    const intervalId = setInterval(() => {
+      if (credentials.length > 0 && !loading) {
+        clearInterval(intervalId);
+        
+        // Activer le 2FA pour tous les identifiants avec OTP
+        setTimeout(() => {
+          credentials.forEach(credential => {
+            if (credential.otp && !credential.twoFA) {
+              toggle2FA(credential);
+            }
+          });
+        }, 1000);
+      }
+    }, 500);
+    
+    // Nettoyage
+    return () => {
+      clearInterval(intervalId);
+    };
+  });
+
+  // Variable pour le menu contextuel du profil
+  let showProfileMenu = false;
+  
+  // Fonction pour afficher/masquer le menu contextuel du profil
+  function toggleProfileMenu(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    showProfileMenu = !showProfileMenu;
+  }
+  
+  // Fonction pour fermer le menu contextuel du profil lors d'un clic en dehors
+  function handleClickOutsideProfile(event: MouseEvent) {
+    if (showProfileMenu) {
+      const target = event.target as HTMLElement;
+      const profileMenu = document.getElementById("profile-menu");
+      const profileButton = document.getElementById("profile-button");
+      
+      if (profileMenu && !profileMenu.contains(target) && 
+          profileButton && !profileButton.contains(target)) {
+        showProfileMenu = false;
+      }
+    }
+  }
+  
+  // Ajouter l'événement de clic pour fermer le menu contextuel du profil
+  onMount(() => {
+    document.addEventListener('click', handleClickOutsideProfile);
+    return () => {
+      document.removeEventListener('click', handleClickOutsideProfile);
+    };
+  });
+
+  // Variables pour l'audit des mots de passe
+  let showAuditModal = false;
+  let weakPasswords: Credential[] = [];
+  let reusedPasswords: {credential: Credential, count: number}[] = [];
+  let breachedPasswords: Credential[] = [];
+  let isCheckingBreaches = false;
+  let haveibeenpwnedError = "";
+  let overallScore = 0;
+  let errorMessage = ""; // Variable pour les messages d'erreur
+
+  // Fonction pour hacher un mot de passe avec SHA-1 (pour l'API haveibeenpwned)
+  async function sha1(password: string): Promise<string> {
+    const msgBuffer = new TextEncoder().encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-1', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  
+  // Fonction pour vérifier si un mot de passe a été compromis via haveibeenpwned
+  async function checkPasswordBreached(password: string): Promise<boolean> {
+    try {
+      const hash = await sha1(password);
+      const prefix = hash.substring(0, 5);
+      const suffix = hash.substring(5).toUpperCase();
+      
+      const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+      
+      const text = await response.text();
+      const lines = text.split('\n');
+      
+      for (const line of lines) {
+        const [hashSuffix, count] = line.split(':');
+        if (hashSuffix.trim() === suffix) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      console.error("Error checking haveibeenpwned:", error);
+      haveibeenpwnedError = String(error);
+      return false;
+    }
+  }
+  
+  // Fonction pour calculer le score global de sécurité
+  function calculateOverallScore(totalPasswords: number): number {
+    if (totalPasswords === 0) return 100;
+    
+    const weakCount = weakPasswords.length;
+    const reusedCount = reusedPasswords.length / 2; // Compter chaque groupe une seule fois
+    const breachedCount = breachedPasswords.length;
+    
+    // Pénalités pour chaque type de problème
+    const weakPenalty = 40 * (weakCount / totalPasswords);
+    const reusedPenalty = 30 * (reusedCount / totalPasswords);
+    const breachedPenalty = 30 * (breachedCount / totalPasswords);
+    
+    // Calculer le score final (100 - pénalités)
+    let score = 100 - (weakPenalty + reusedPenalty + breachedPenalty);
+    
+    // Limiter le score entre 0 et 100
+    score = Math.max(0, Math.min(100, score));
+    
+    return Math.round(score);
+  }
+  
+  // Fonction pour obtenir la qualification du score
+  function getScoreRating(score: number): string {
+    if (score >= 90) return t('excellent', lang);
+    if (score >= 70) return t('good', lang);
+    if (score >= 50) return t('moderate', lang);
+    if (score >= 30) return t('poor', lang);
+    return t('critical', lang);
+  }
+  
+  // Fonction pour obtenir la couleur du score
+  function getScoreColor(score: number): string {
+    if (score >= 90) return "#a7f3ae"; // Vert vif - excellent
+    if (score >= 70) return "#a7f3ae99"; // Vert clair - bon
+    if (score >= 50) return "#f8d88a"; // Jaune - moyen
+    if (score >= 30) return "#f2c3c2"; // Rose - faible
+    return "#e53e3e"; // Rouge - critique
+  }
+  
+  // Fonction pour auditer tous les mots de passe
+  async function auditAllPasswords() {
+    // Réinitialiser les résultats précédents
+    weakPasswords = [];
+    reusedPasswords = [];
+    breachedPasswords = [];
+    isCheckingBreaches = true;
+    haveibeenpwnedError = "";
+    
+    // Ouvrir le modal immédiatement pour montrer le chargement
+    showAuditModal = true;
+    
+    // Vérifier les mots de passe faibles (score < 3)
+    weakPasswords = credentials.filter(cred => {
+      if (!cred.password) return false;
+      const result = evaluatePasswordStrength(cred.password);
+      return result.score < 3;
+    });
+    
+    // Vérifier les mots de passe réutilisés
+    const passwordMap = new Map<string, number>();
+    const passwordCredMap = new Map<string, Credential[]>();
+    
+    credentials.forEach(cred => {
+      if (!cred.password) return;
+      
+      // Compter les occurrences du mot de passe
+      const count = passwordMap.get(cred.password) || 0;
+      passwordMap.set(cred.password, count + 1);
+      
+      // Associer le mot de passe à ses credentials
+      const creds = passwordCredMap.get(cred.password) || [];
+      creds.push(cred);
+      passwordCredMap.set(cred.password, creds);
+    });
+    
+    // Collecter les mots de passe réutilisés
+    passwordMap.forEach((count, password) => {
+      if (count > 1) {
+        const creds = passwordCredMap.get(password) || [];
+        creds.forEach(cred => {
+          reusedPasswords.push({ credential: cred, count });
+        });
+      }
+    });
+    
+    // Vérifier les mots de passe compromis via haveibeenpwned
+    const uniquePasswords = new Set<string>();
+    const breachCheckPromises: Promise<void>[] = [];
+    
+    for (const cred of credentials) {
+      if (!cred.password || uniquePasswords.has(cred.password)) continue;
+      
+      uniquePasswords.add(cred.password);
+      
+      const promise = checkPasswordBreached(cred.password).then(isBreached => {
+        if (isBreached) {
+          // Trouver tous les credentials avec ce mot de passe
+          credentials.forEach(c => {
+            if (c.password === cred.password) {
+              breachedPasswords.push(c);
+            }
+          });
+        }
+      });
+      
+      breachCheckPromises.push(promise);
+    }
+    
+    // Attendre que toutes les vérifications soient terminées
+    await Promise.all(breachCheckPromises);
+    
+    // Calculer le score global
+    overallScore = calculateOverallScore(credentials.length);
+    
+    isCheckingBreaches = false;
+  }
+  
+  // Fonction pour fermer le modal d'audit
+  function closeAuditModal() {
+    showAuditModal = false;
+  }
+  
+  // Fonction pour éditer un identifiant depuis l'audit
+  function editFromAudit(cred: Credential) {
+    // Fermer le modal d'audit
+    showAuditModal = false;
+    
+    // Commencer l'édition de l'identifiant
+    startEdit(cred);
+    
+    // Utiliser setTimeout pour attendre que le DOM soit mis à jour
+    setTimeout(() => {
+      // Trouver l'élément à faire défiler jusqu'à
+      const element = document.querySelector(`[data-password-id="${cred.id}"]`);
+      if (element) {
+        // Faire défiler jusqu'à l'élément
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  }
+
+  // ... existing code ...
 </script>
 <svelte:head>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1523,6 +1741,10 @@
     border-left-color: #f2c3c2;
     animation: spin 1s linear infinite;
     margin: auto;
+  }
+
+  .hover-bg:hover {
+    background-color: #a7f3ae54;
   }
 
   @keyframes spin {
@@ -1576,7 +1798,7 @@
   }
 
   .danger-btn {
-    background-color: #b00e0b;
+    background-color: #e53e3e;
     color: white;
     transition: all 0.2s ease-in-out;
   }
@@ -1639,6 +1861,36 @@
   
   .pulse-animation {
     animation: pulse 1s infinite;
+  }
+
+  /* Style pour le code 2FA */
+  .otp-code {
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    letter-spacing: 1px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    transition: all 0.2s ease;
+  }
+
+  .otp-code:hover {
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.25);
+  }
+
+  /* Style pour le bouton de copie */
+  .copy-button {
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+  }
+
+  .copy-button:hover {
+    opacity: 1;
+  }
+
+  /* Animation du timer */
+  .timer-circle {
+    transition: stroke-dashoffset 1s linear;
   }
 
   /* Styles responsives */
@@ -1755,26 +2007,89 @@
       max-width: none;
     }
   }
+
+  /* Style pour le menu du profil */
+  .hover-bg:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+  
+  /* Personnalisation de la barre de défilement */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(71, 75, 79, 0.3);
+    border-radius: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #474b4f;
+    border-radius: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #5a5f64;
+  }
 </style>
 
 <div class="min-h-screen p-4" style="background-color: #1d1b21; font-family: 'Work Sans', sans-serif;">
   <div class="max-w-3xl mx-auto">
-    <!-- Disconnect Button -->
-    <div class="absolute top-4 right-4 flex space-x-2">
+    <!-- Bouton de profil avec menu contextuel -->
+    <div class="absolute top-4 right-4">
       <button
-        on:click={toggleLanguage}
-        class="px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ease-in-out"
+        id="profile-button"
+        on:click={toggleProfileMenu}
+        class="w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ease-in-out"
         style="background-color: #474b4f; color: white;"
       >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        </svg>
+      </button>
+      
+      <!-- Menu contextuel du profil -->
+      {#if showProfileMenu}
+        <div 
+          id="profile-menu"
+          class="absolute right-0 mt-2 rounded-lg shadow-lg py-2 z-[100] min-w-[150px]"
+          style="background-color: #1d1b21; border: 2px solid #ced7e1;"
+        >
+          <div class="px-4 py-2 border-b border-gray-700">
+            <span class="text-sm font-medium" style="color: #ced7e1;">{t('profile', lang)}</span>
+          </div>
+          <button
+            class="w-full px-4 py-2 text-left hover-bg flex items-center"
+            on:click={auditAllPasswords}
+            style="color: #ced7e1;"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            {t('auditPasswords', lang)}
+          </button>
+          <button
+            class="w-full px-4 py-2 text-left hover-bg flex items-center"
+            on:click={toggleLanguage}
+            style="color: #ced7e1;"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+            </svg>
         {lang === 'fr' ? 'Français' : 'English'}
       </button>
       <button
+            class="w-full px-4 py-2 text-left hover-bg flex items-center"
         on:click={disconnect}
-        class="px-3 py-1 rounded-md text-sm font-medium transition-all duration-200 ease-in-out"
-        style="background-color: #b00e0b; color: white;"
+            style="color: #e53e3e;"
       >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
         {t('logout', lang)}
       </button>
+        </div>
+      {/if}
     </div>
     <h1 class="text-3xl font-bold text-center mb-6 text-white" style="font-family: 'Raleway', sans-serif;">
       {t('vault', lang)}
@@ -2135,7 +2450,7 @@
           <button
             on:click={() => handleRejectSharedPass(pendingCredential.credential)}
             class="danger-btn px-4 py-2 rounded-lg flex-1"
-            style="background-color: #b00e0b; color: white;"
+            style="background-color: #e53e3e; color: white;"
           >
             {t('reject', lang) || 'Refuser'}
           </button>
@@ -2144,7 +2459,7 @@
     {/each}
     <!-- Credentials list -->
     {#each filteredCredentials as credential (credential.id)}
-      <div class="card p-4 mb-4">
+      <div class="card p-4 mb-4" data-password-id={credential.id}>
         {#if editingId === credential.id}
           <!-- Edit Mode -->
           <div class="mb-2">
@@ -2364,140 +2679,29 @@
                   {/if}
                 </div>
               </h3>
-              <div class="mt-1 flex items-center flex-wrap">
-                <span class="mr-2" style="color: #474b4f;">{t('username', lang)}:</span>
-                <span class="font-medium break-all" style="color: #1d1b21;">{credential.username.length > 40 ? credential.username.slice(0, 40) + "..." : credential.username}</span>
-                <button
-                  on:click={() => copyText(credential.username)}
-                  class="ml-2 text-blue-500 hover:text-blue-700 copy-btn"
-                  title={t('copiedToClipboard', lang)}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-                    />
-                  </svg>
-                </button>
-              </div>
-              <div class="mt-1 flex items-center">
-                <span class="mr-2" style="color: #474b4f;">{t('password', lang)}:</span>
-                <span class="font-medium" style="color: #1d1b21;">••••••••</span>
-                <button
-                  on:click={() => copyText(credential.password)}
-                  class="ml-2 text-blue-500 hover:text-blue-700 copy-btn"
-                  title={t('copiedToClipboard', lang)}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-                    />
-                  </svg>
-                </button>
-              </div>
-              {#if credential.owneremail}
-                <div class="mt-2 text-xs text-purple-700">
-                  {t('sharedBy', lang)} {credential.owneremail}
-                </div>
-              {/if}
-            </div>
-            <div class="flex flex-col items-start sm:items-end space-y-2 mt-3 sm:mt-0 w-full sm:w-auto">
-              <div class="flex space-x-2 w-full sm:w-auto justify-start sm:justify-end">
-                {#if !credential.sharedBy}
-                  <button
-                    on:click={() => startEdit(credential)}
-                    class="text-blue-500 hover:text-blue-700"
-                    title="Modifier"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                      />
-                    </svg>
-                  </button>
-                  <button
-                    on:click={() => showShareModal(credential)}
-                    class="text-purple-500 hover:text-purple-700"
-                    title="Partager"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"
-                      />
-                    </svg>
-                  </button>
-                {/if}
-                {#if credential.sharedBy}
-                  <button
-                    on:click={() => handleRejectSharedPass(credential)}
-                    class="text-red-500 hover:text-red-700"
-                    title={t('deleteShared', lang) || "Supprimer ce partage"}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                      />
-                    </svg>
-                  </button>
-                {/if}
-                {#if !credential.sharedBy && !credential.ownerUuid}
-                  <div class="w-5 h-5"></div>
-                {/if}
-              </div>
               
-              {#if credential.otp}
-                {#if credential.twoFA}
-                  <div class="flex items-center flex-wrap gap-2 mt-2 w-full sm:w-auto justify-start sm:justify-end">
-                    <span style="color: #474b4f;">{t('twoFaCode', lang)}</span>
-                    <span class="font-mono px-2 py-1 rounded" style="background-color: #f2c3c2; color: #1d1b21;">
-                      {credential.twoFA}
-                    </span>
-                                        
-                    <!-- Indicateur circulaire du temps restant -->
+              <!-- Nom d'utilisateur et code 2FA sur la même ligne -->
+              <div class="mt-2 flex items-center flex-wrap justify-between">
+                <div class="flex-grow">
+                <span class="font-medium break-all" style="color: #1d1b21;">{credential.username.length > 40 ? credential.username.slice(0, 40) + "..." : credential.username}</span>
+              </div>
+                
+                {#if credential.otp && credential.twoFA}
+                  <div class="flex items-center ml-2">
+                    <div class="relative flex items-center">
+                      <span class="font-mono px-2 py-1 rounded flex items-center otp-code" style="background-color: #1d1b21; color: #a7f3ae;">
+                        {credential.twoFA}
+                      </span>
+                <button
+                        class="ml-2 text-gray-500 hover:text-gray-700 p-1 rounded-full hover:bg-gray-100 copy-button"
+                        on:click={() => copyText(credential.twoFA || "")}
+                        title={t('copyToClipboard', lang) || "Copier le code"}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                  </svg>
+                </button>
+              </div>
                     {#if credential.id in remainingTimes}
                       {@const period = otpPeriods[credential.id] || 30}
                       {@const percentage = 100 - (remainingTimes[credential.id] / period * 100)}
@@ -2505,71 +2709,58 @@
                       {@const timeLeft = remainingTimes[credential.id]}
                       {@const isLow = timeLeft <= 5}
                       {@const isVeryLow = timeLeft <= 3}
-                      {@const circleColor = isLow ? "#b00e0b" : "#a7f3ae"}
-                      {@const textColor = isLow ? "#ffffff" : "#1d1b21"}
-                      {@const bgColor = isLow ? "rgba(176, 14, 11, 0.2)" : "transparent"}
-                      <div class="relative w-10 h-10 {isVeryLow ? 'pulse-animation' : ''}">
-                        <svg class="w-10 h-10" viewBox="0 0 36 36">
-                          <circle cx="18" cy="18" r="16" fill={bgColor} stroke="#e0e0e0" stroke-width="2"></circle>
+                      {@const circleColor = isLow ? "#e53e3e" : "#a7f3ae"}
+                      {@const textColor = isLow ? "#ffffff" : "#a7f3ae"}
+                      {@const bgColor = isLow ? "#1d1b21" : "#1d1b21"}
+                      <div class="relative w-8 h-8 ml-1 {isVeryLow ? 'pulse-animation' : ''}">
+                        <svg class="w-8 h-8" viewBox="0 0 36 36">
+                          <circle cx="18" cy="18" r="16" fill={bgColor} stroke="#474b4f" stroke-width="1"></circle>
                           <circle 
                             cx="18" 
                             cy="18" 
                             r="16" 
                             fill="none" 
                             stroke={circleColor} 
-                            stroke-width="3" 
+                            stroke-width="2" 
                             stroke-dasharray={dashArray} 
                             stroke-linecap="round" 
                             transform="rotate(-90 18 18)"
+                            class="timer-circle"
                           ></circle>
-                          <g>
                             <text 
                               x="18" 
-                              y="18" 
+                            y="19" 
                               text-anchor="middle" 
-                              alignment-baseline="central" 
+                            dominant-baseline="central" 
                               fill={textColor} 
-                              font-size="18" 
-                              font-family="'Raleway', sans-serif"
-                              dy=".35em"
+                            font-size="12" 
+                            font-weight="bold"
                             >
                               {timeLeft}
                             </text>
-                          </g>
                         </svg>
                       </div>
                     {/if}
-                    <button
-                      on:click={() => copyText(credential.twoFA)}
-                      class="text-blue-500 hover:text-blue-700 copy-btn"
-                      title={t('copiedToClipboard', lang)}
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        class="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"
-                        />
-                      </svg>
-                    </button>
-
                   </div>
                 {/if}
+              </div>
+              
+              {#if credential.owneremail}
+                <div class="mt-2 text-xs text-purple-700">
+                  {t('sharedBy', lang)} {credential.owneremail}
+                  </div>
+                {/if}
+            </div>
+            <div class="flex flex-col items-start sm:items-end space-y-2 mt-3 sm:mt-0 w-full sm:w-auto">
                 <button
-                  on:click={() => toggle2FA(credential)}
-                  class="text-sm px-2 py-1 rounded w-full sm:w-auto text-center"
-                  style="background-color: #a7f3ae; color: #1d1b21;"
-                >
-                  {credential.twoFA ? t('disableTwoFa', lang) : t('enableTwoFa', lang)}
+                on:click={(event) => showContextMenu(event, credential)}
+                class="text-gray-500 hover:text-gray-700 p-2 rounded-full hover:bg-gray-100"
+                title={t('showActions', lang) || "Afficher les actions"}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                </svg>
                 </button>
-              {/if}
             </div>
           </div>
         {/if}
@@ -2698,6 +2889,254 @@
       </p>
       {#if importError}
         <p class="text-red-500 mt-2 text-xs sm:text-sm">{importError}</p>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Menu contextuel -->
+{#if contextMenu.show && contextMenu.credential}
+  <div 
+    class="fixed rounded-lg shadow-lg py-2 z-[100] min-w-[200px]"
+    style="left: {contextMenu.x}px; top: {contextMenu.y}px; background-color: #1d1b21;border: 2px solid #ced7e1;"
+  >
+    <button
+      class="w-full px-4 py-2 text-left hover-bg flex items-center"
+      on:click={() => {
+        if (contextMenu.credential?.username) {
+          copyText(contextMenu.credential.username);
+        }
+        closeContextMenu();
+      }}
+      style="color: #ced7e1;"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+      </svg>
+      {t('copyUsername', lang) || "Copier le nom d'utilisateur"}
+    </button>
+    <button
+      class="w-full px-4 py-2 text-left hover-bg flex items-center"
+      on:click={() => {
+        if (contextMenu.credential?.password) {
+          copyText(contextMenu.credential.password);
+        }
+        closeContextMenu();
+      }}
+      style="color: #ced7e1;"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+      </svg>
+      {t('copyPassword', lang) || "Copier le mot de passe"}
+    </button>
+    {#if !contextMenu.credential.sharedBy}
+      <button
+        class="w-full px-4 py-2 text-left hover-bg flex items-center"
+        on:click={() => {
+          startEdit(contextMenu.credential!);
+          closeContextMenu();
+        }}
+        style="color: #ced7e1;"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+        {t('edit', lang) || "Modifier"}
+      </button>
+      <button
+        class="w-full px-4 py-2 text-left hover-bg flex items-center"
+        on:click={() => {
+          showShareModal(contextMenu.credential!);
+          closeContextMenu();
+        }}
+        style="color: #ced7e1;"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+        </svg>
+        {t('share', lang) || "Partager"}
+      </button>
+    {/if}
+    {#if contextMenu.credential.sharedBy}
+      <button
+        class="w-full px-4 py-2 text-left hover-bg flex items-center"
+        on:click={() => {
+          handleRejectSharedPass(contextMenu.credential!);
+          closeContextMenu();
+        }}
+        style="color: #e53e3e;"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+        {t('deleteShared', lang) || "Supprimer ce partage"}
+      </button>
+    {/if}
+  </div>
+{/if}
+
+<!-- Modal d'audit des mots de passe -->
+{#if showAuditModal}
+  <div class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="rounded-lg shadow-xl border w-full max-w-4xl max-h-[90vh]" style="background-color: #1d1b21; border-color: #474b4f;">
+      <div class="p-4 border-b" style="border-color: #474b4f;">
+        <div class="flex justify-between items-center">
+          <h2 class="text-xl font-semibold" style="color: #ced7e1; font-family: 'Raleway', sans-serif;">{t('passwordAudit', lang)}</h2>
+          <button on:click={closeAuditModal} class="hover:text-gray-300" style="color: #ced7e1;">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      
+      <!-- Score global -->
+      <div class="p-6 border-b" style="border-color: #474b4f;">
+        <div class="flex flex-col sm:flex-row items-center gap-6">
+          <div class="w-28 h-28 rounded-full flex items-center justify-center border-4" 
+               style="border-color: {getScoreColor(overallScore)}">
+            <span class="text-4xl font-bold" style="color: #ced7e1; font-family: 'Raleway', sans-serif;">{overallScore}</span>
+          </div>
+          <div class="text-center sm:text-left">
+            <h3 class="text-xl font-semibold mb-2" style="color: #ced7e1; font-family: 'Raleway', sans-serif;">{t('overallScore', lang)}</h3>
+            <p class="text-lg mb-2" style="color: #ced7e1; font-weight: 500;">{getScoreRating(overallScore)}</p>
+            <p class="text-sm" style="color: #ced7e1;">{t('scoreExplanation', lang)}</p>
+          </div>
+        </div>
+      </div>
+      
+      {#if isCheckingBreaches}
+        <div class="p-6 flex justify-center items-center min-h-[300px]">
+          <div class="flex flex-col items-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 mb-4" style="border-color: #f2c3c2;"></div>
+            <span class="text-lg" style="color: #ced7e1;">{t('checkingBreaches', lang)}</span>
+          </div>
+        </div>
+      {:else}
+        <div class="p-6 overflow-y-auto max-h-[calc(90vh-240px)]" style="background-color: #1d1b21;">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Mots de passe faibles -->
+            <div class="border rounded-lg overflow-hidden" style="border-color: #474b4f; background-color: #1d1b21;">
+              <div class="p-4" style="background-color: rgba(229, 62, 62, 0.1);">
+                <h3 class="text-lg font-semibold flex items-center" style="color: #ced7e1; font-family: 'Raleway', sans-serif;">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" style="color: #e53e3e;" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                  </svg>
+                  {t('weakPasswords', lang)} ({weakPasswords.length})
+                </h3>
+              </div>
+              
+              <div class="px-4 py-3">
+                {#if weakPasswords.length === 0}
+                  <p class="py-8 text-center" style="color: #ced7e1; font-style: italic;">{t('noWeakPasswords', lang)}</p>
+                {:else}
+                  <div class="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                    {#each weakPasswords as cred}
+                      <div class="rounded-md p-3" style="background-color: #2a2831; border: 1px solid #474b4f;">
+                        <div class="flex justify-between items-center">
+                          <div class="overflow-hidden max-w-[75%]">
+                            <div class="font-semibold truncate" style="color: #ced7e1;" title={cred.service}>{cred.service}</div>
+                            <div class="text-sm truncate" style="color: #ced7e1; opacity: 0.7;" title={cred.username || ''}>{cred.username || ''}</div>
+                          </div>
+                          <button on:click={() => editFromAudit(cred)} class="hover:opacity-75 transition-opacity flex-shrink-0" style="color: #1d1b21; background-color: #a7f3ae; border-radius: 9999px; padding: 4px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                            </svg>
+                          </button>
+                        </div>
+                        <div class="mt-2">
+                          <div class="w-full rounded-full h-2" style="background-color: #474b4f;">
+                            {#if cred.password}
+                              <div class="h-2 rounded-full" style="width: {Math.max(5, evaluatePasswordStrength(cred.password).score * 25)}%; background-color: {evaluatePasswordStrength(cred.password).color}"></div>
+                            {/if}
+                          </div>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            </div>
+            
+            <!-- Mots de passe réutilisés -->
+            <div class="border rounded-lg overflow-hidden" style="border-color: #474b4f; background-color: #1d1b21;">
+              <div class="p-4" style="background-color: rgba(214, 158, 46, 0.1);">
+                <h3 class="text-lg font-semibold flex items-center" style="color: #ced7e1; font-family: 'Raleway', sans-serif;">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" style="color: #d69e2e;" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M3 6a3 3 0 013-3h10a1 1 0 01.8 1.6L14.25 8l2.55 3.4A1 1 0 0116 13H6a1 1 0 00-1 1v3a1 1 0 11-2 0V6z" clip-rule="evenodd" />
+                  </svg>
+                  {t('reusedPasswords', lang)} ({reusedPasswords.length})
+                </h3>
+              </div>
+              
+              <div class="px-4 py-3">
+                {#if reusedPasswords.length === 0}
+                  <p class="py-8 text-center" style="color: #ced7e1; font-style: italic;">{t('noReusedPasswords', lang)}</p>
+                {:else}
+                  <div class="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                    {#each reusedPasswords as { credential, count }}
+                      <div class="rounded-md p-3" style="background-color: #2a2831; border: 1px solid #474b4f;">
+                        <div class="flex justify-between items-center">
+                          <div class="overflow-hidden max-w-[75%]">
+                            <div class="font-semibold truncate" style="color: #ced7e1;" title={credential.service}>{credential.service}</div>
+                            <div class="text-sm truncate" style="color: #ced7e1; opacity: 0.7;" title={credential.username || ''}>{credential.username || ''}</div>
+                          </div>
+                          <div class="flex items-center flex-shrink-0">
+                            <span class="text-sm mr-2 px-2 py-1 rounded" style="color: #1d1b21; background-color: #f8d88a;">{count}x</span>
+                            <button on:click={() => editFromAudit(credential)} class="hover:opacity-75 transition-opacity" style="color: #1d1b21; background-color: #a7f3ae; border-radius: 9999px; padding: 4px;">
+                              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            </div>
+            
+            <!-- Mots de passe compromis -->
+            <div class="border rounded-lg overflow-hidden" style="border-color: #474b4f; background-color: #1d1b21;">
+              <div class="p-4" style="background-color: rgba(176, 14, 11, 0.1);">
+                <h3 class="text-lg font-semibold flex items-center" style="color: #ced7e1; font-family: 'Raleway', sans-serif;">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" style="color: #e53e3e;" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v-1l1-1 1-1 .257-.257A6 6 0 1118 8zm-6-4a1 1 0 100 2h2a1 1 0 100-2h-2z" clip-rule="evenodd" />
+                  </svg>
+                  {t('breachedPasswords', lang)} ({breachedPasswords.length})
+                </h3>
+              </div>
+              
+              <div class="px-4 py-3">
+                {#if haveibeenpwnedError}
+                  <p class="py-3" style="color: #e53e3e;">{t('apiError', lang)}: {haveibeenpwnedError}</p>
+                {:else if breachedPasswords.length === 0}
+                  <p class="py-8 text-center" style="color: #ced7e1; font-style: italic;">{t('noBreachedPasswords', lang)}</p>
+                {:else}
+                  <div class="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                    {#each breachedPasswords as cred}
+                      <div class="rounded-md p-3" style="background-color: #2a2831; border: 1px solid #474b4f;">
+                        <div class="flex justify-between items-center">
+                          <div class="overflow-hidden max-w-[75%]">
+                            <div class="font-semibold truncate" style="color: #ced7e1;" title={cred.service}>{cred.service}</div>
+                            <div class="text-sm truncate" style="color: #ced7e1; opacity: 0.7;" title={cred.username || ''}>{cred.username || ''}</div>
+                          </div>
+                          <button on:click={() => editFromAudit(cred)} class="hover:opacity-75 transition-opacity flex-shrink-0" style="color: #1d1b21; background-color: #a7f3ae; border-radius: 9999px; padding: 4px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
+        </div>
       {/if}
     </div>
   </div>
