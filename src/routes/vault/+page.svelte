@@ -3,7 +3,7 @@
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { clientex, client } from "../stores";
-  import { get_all, update_pass, delete_pass, create_pass, share_pass, get_shared_by_user, get_shared_by_user_emails, get_emails_from_uuids, get_uuid_from_email, unshare_pass, ShareStatus, accept_shared_pass, reject_shared_pass } from "$lib/client";
+  import { get_all, update_pass, delete_pass, create_pass, share_pass, get_shared_by_user, get_shared_by_user_emails, get_emails_from_uuids, get_uuid_from_email, unshare_pass, ShareStatus, accept_shared_pass, reject_shared_pass, exportPasswords, exportPasswordsCSV, exportPasswordsText } from "$lib/client";
   import { from_uri, generate } from "$lib/otp";
   import * as pkg from "uuid-tool";
   import Plus from "lucide-svelte/icons/plus";
@@ -255,6 +255,82 @@
   let importTotal = 0;
   let importError = '';
   let fileInput: HTMLInputElement;
+  
+  // Variables pour l'exportation
+  let exportFormat = 'json'; // Format d'exportation par défaut: 'json', 'csv', ou 'txt'
+  let showExportDialog = false;
+  
+  // Fonction pour exporter les mots de passe
+  function handleExport() {
+    if (!isClientValid() || !credentials.length) {
+      showToast(t('noCredentialsToExport', lang) || "Aucun mot de passe à exporter");
+      return;
+    }
+    
+    try {
+      // Convertir les identifiants au format Password accepté par les fonctions d'export
+      const passwordsToExport = credentials.map(cred => ({
+        username: cred.username,
+        password: cred.password,
+        app_id: cred.service, // Utiliser le champ service comme app_id
+        description: null,
+        url: null,
+        otp: cred.otp
+      }));
+      
+      // Convertir les UUIDs des mots de passe
+      const passwordUuids = credentials.map(cred => {
+        const uuid = memoizedUuidToBytes(cred.uuid);
+        if (!uuid) {
+          throw new Error(t('uuidConversionError', lang));
+        }
+        return uuid;
+      });
+      
+      let fileContent = '';
+      let filename = `passwords_export_${new Date().toISOString().slice(0, 10)}`;
+      let mimeType = '';
+      
+      // Générer le contenu selon le format choisi
+      switch (exportFormat) {
+        case 'json':
+          fileContent = exportPasswords($clientex!.id.id!, passwordsToExport, passwordUuids);
+          filename += '.json';
+          mimeType = 'application/json';
+          break;
+        case 'csv':
+          fileContent = exportPasswordsCSV($clientex!.id.id!, passwordsToExport);
+          filename += '.csv';
+          mimeType = 'text/csv';
+          break;
+        case 'txt':
+          fileContent = exportPasswordsText($clientex!.id.id!, passwordsToExport);
+          filename += '.txt';
+          mimeType = 'text/plain';
+          break;
+        default:
+          throw new Error('Format d\'exportation non valide');
+      }
+      
+      // Créer un blob et déclencher le téléchargement
+      const blob = new Blob([fileContent], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      showToast(t('exportSuccess', lang) || "Mots de passe exportés avec succès");
+    } catch (error) {
+      console.error("Erreur lors de l'exportation:", error);
+      showToast(t('exportError', lang) || "Erreur lors de l'exportation");
+    } finally {
+      showExportDialog = false;
+    }
+  }
 
   // Fonction utilitaire pour convertir un UUID en format bytes
   function uuidToBytes(uuidStr: string) {
@@ -1414,8 +1490,8 @@
     const windowHeight = window.innerHeight;
     
     // Obtenir la position du clic par rapport à la page
-    const x = event.pageX;
-    const y = event.pageY;
+    const x = event.clientX;
+    const y = event.clientY;
     
     // Dimensions du menu contextuel (approximatives)
     const menuWidth = 200;
@@ -1725,6 +1801,162 @@
   }
 
   // ... existing code ...
+
+  // Variables pour la navigation au clavier
+  let focusedCredentialIndex = -1;
+  let searchInputRef: HTMLInputElement;
+  let showKeyboardHelp = false;
+  
+  // Fonction pour copier du texte dans le presse-papiers
+  function copyToClipboard(text: string) {
+    if (!text) return;
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        showToast(t('copiedToClipboard', lang));
+      })
+      .catch(err => {
+        console.error('Erreur lors de la copie dans le presse-papiers:', err);
+      });
+  }
+  
+  // Fonction pour gérer les raccourcis clavier globaux
+  function handleKeyDown(event: KeyboardEvent) {
+    // Ne pas intercepter les événements clavier lors de la saisie dans un input/textarea
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      // Si la touche Escape est pressée dans le champ de recherche, effacer le champ
+      if (event.key === 'Escape' && event.target === searchInputRef) {
+        searchTerm = '';
+        event.target.blur();
+        event.preventDefault();
+      }
+      return;
+    }
+    
+    // Raccourcis clavier globaux
+    switch (event.key) {
+      case '/': // Raccourci pour la recherche
+        if (searchInputRef) {
+          searchInputRef.focus();
+          event.preventDefault();
+        }
+        break;
+      case 'n': // Nouveau mot de passe
+        if (!showAddForm && !showExportDialog && !importingFile) {
+          showAddForm = true;
+          goto("#add-credential-form");
+        }
+        event.preventDefault();
+        break;
+      case 'e': // Exporter
+        if (!showAddForm && !showExportDialog && !importingFile) {
+          showExportDialog = true;
+        }
+        event.preventDefault();
+        break;
+      case 'i': // Importer
+        if (!showAddForm && !showExportDialog && !importingFile) {
+          fileInput?.click();
+        }
+        event.preventDefault();
+        break;
+      case 'Escape': // Fermer les modales ou formulaires
+        if (showExportDialog) {
+          showExportDialog = false;
+          event.preventDefault();
+        } else if (showAddForm) {
+          showAddForm = false;
+          event.preventDefault();
+        } else if (showKeyboardHelp) {
+          showKeyboardHelp = false;
+          event.preventDefault();
+        }
+        break;
+      // Navigation avec les touches vim
+      case 'j': // Comme flèche bas
+      case 'ArrowDown': // Navigation vers le bas dans la liste
+        if (filteredCredentials.length > 0) {
+          focusedCredentialIndex = Math.min(focusedCredentialIndex + 1, filteredCredentials.length - 1);
+          scrollToCredential(focusedCredentialIndex);
+          event.preventDefault();
+        }
+        break;
+      case 'k': // Comme flèche haut
+      case 'ArrowUp': // Navigation vers le haut dans la liste
+        if (filteredCredentials.length > 0) {
+          focusedCredentialIndex = Math.max(focusedCredentialIndex - 1, 0);
+          scrollToCredential(focusedCredentialIndex);
+          event.preventDefault();
+        }
+        break;
+      case 'h': // Déplacer vers la gauche/revenir en arrière
+        // À implémenter selon besoin
+        break;
+      case 'l': // Déplacer vers la droite/avancer
+        // À implémenter selon besoin
+        break;
+      case 'Enter': // Sélectionner l'élément en cours
+        if (focusedCredentialIndex >= 0 && focusedCredentialIndex < filteredCredentials.length) {
+          const credential = filteredCredentials[focusedCredentialIndex];
+          // Ouvrir/copier/etc selon le contexte
+          handleCredentialSelection(credential);
+          event.preventDefault();
+        }
+        break;
+      // Raccourcis de copie
+      case 'u': // Copier nom d'utilisateur (username)
+        if (focusedCredentialIndex >= 0 && focusedCredentialIndex < filteredCredentials.length) {
+          const credential = filteredCredentials[focusedCredentialIndex];
+          copyToClipboard(credential.username);
+          event.preventDefault();
+        }
+        break;
+      case 'p': // Copier mot de passe (password)
+        if (focusedCredentialIndex >= 0 && focusedCredentialIndex < filteredCredentials.length) {
+          const credential = filteredCredentials[focusedCredentialIndex];
+          copyToClipboard(credential.password);
+          event.preventDefault();
+        }
+        break;
+      case 'o': // Copier code OTP
+        if (focusedCredentialIndex >= 0 && focusedCredentialIndex < filteredCredentials.length) {
+          const credential = filteredCredentials[focusedCredentialIndex];
+          if (credential.twoFA) {
+            copyToClipboard(credential.twoFA);
+            event.preventDefault();
+          }
+        }
+        break;
+      case '?': // Afficher l'aide des raccourcis clavier
+        showKeyboardHelp = !showKeyboardHelp;
+        event.preventDefault();
+        break;
+    }
+  }
+  
+  // Fonction pour faire défiler vers l'élément sélectionné
+  function scrollToCredential(index: number) {
+    if (index >= 0) {
+      const element = document.getElementById(`credential-${index}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }
+  
+  // Fonction pour gérer la sélection d'un identifiant via le clavier
+  function handleCredentialSelection(credential: any) {
+    // Copier le mot de passe par défaut
+    copyToClipboard(credential.password);
+  }
+  
+  // S'assurer que les événements de clavier sont bien gérés
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyDown);
+  });
+  
+  onDestroy(() => {
+    window.removeEventListener('keydown', handleKeyDown);
+  });
 </script>
 <svelte:head>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2031,6 +2263,20 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #5a5f64;
   }
+
+  /* Style pour .highlight */
+  .highlight {
+    background-color: #f9f5eb;
+    border: 2px solid #f3d9a7 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  /* Style pour les kbd */
+  kbd {
+    background-color: #f3f3f3;
+    border: 1px solid #d0d0d0;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+  }
 </style>
 
 <div class="min-h-screen p-4" style="background-color: #1d1b21; font-family: 'Work Sans', sans-serif;">
@@ -2107,17 +2353,17 @@
     <!-- Search -->
     <div class="mb-6">
       <div class="relative">
+        <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+          <Search class="w-5 h-5 text-gray-500" />
+        </div>
         <input
           type="text"
+          bind:this={searchInputRef}
           bind:value={searchTerm}
           placeholder={t('search', lang)}
-          class="w-full border rounded-lg
-                focus:outline-none focus:ring-2 focus:ring-blue-500 pl-10"
-          style="background-color: white; border-color: #474b4f; color: #1d1b21;"
+          class="w-full py-2 pl-10 pr-4 text-sm text-gray-700 border rounded-lg focus:outline-none focus:border-blue-400"
         />
-        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-          <Search class="w-5 h-5 text-gray-400" />
-        </div>
+        <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-xs text-gray-500">/</div>
       </div>
       <div class="text-xs text-white mt-1 italic px-2">
         {t('searchTip', lang) || `Astuce: Utilisez !shared pour voir les mots de passe partagés avec vous, !sharedbyme pour ceux que vous avez partagés.`}
@@ -2198,6 +2444,45 @@
         on:change={importPasswords}
         bind:this={fileInput}
       />
+      
+      <!-- Bouton d'exportation -->
+      <button
+        on:click={() => showExportDialog = true}
+        class="fixed bottom-4 right-36 h-14 w-14 rounded-full shadow-lg transition-transform hover:scale-110 z-10"
+        style="background-color: #c3f2f7;"
+        title={t('exportPasswords', lang)}
+      >
+        <div class="flex items-center justify-center h-full w-full rounded-full">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-zinc-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </div>
+      </button>
+      
+      <!-- Bouton d'aide clavier -->
+      <button
+        on:click={() => showKeyboardHelp = true}
+        class="fixed bottom-4 right-52 h-14 w-14 rounded-full shadow-lg transition-transform hover:scale-110 z-10"
+        style="background-color: #f3d9a7;"
+        title={t('keyboardShortcuts', lang)}
+      >
+        <div class="flex items-center justify-center h-full w-full rounded-full">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-zinc-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+            <path d="M6 8h.01"></path>
+            <path d="M10 8h.01"></path>
+            <path d="M14 8h.01"></path>
+            <path d="M18 8h.01"></path>
+            <path d="M6 12h.01"></path>
+            <path d="M10 12h.01"></path>
+            <path d="M14 12h.01"></path>
+            <path d="M18 12h.01"></path>
+            <path d="M6 16h12"></path>
+          </svg>
+        </div>
+      </button>
     </div>
 
     <!-- Add Credential Form -->
@@ -2458,8 +2743,19 @@
       </div>
     {/each}
     <!-- Credentials list -->
-    {#each filteredCredentials as credential (credential.id)}
-      <div class="card p-4 mb-4" data-password-id={credential.id}>
+    {#each filteredCredentials as credential, i}
+      <div
+        id="credential-{i}"
+        class="card rounded-lg p-4 mb-4 transition-colors duration-200 hover:bg-gray-100 relative group"
+        class:highlight={focusedCredentialIndex === i}
+        tabindex="0"
+        on:keydown={(e) => {
+          if (e.key === 'Enter') {
+            handleCredentialSelection(credential);
+          }
+        }}
+        aria-selected={focusedCredentialIndex === i}
+      >
         {#if editingId === credential.id}
           <!-- Edit Mode -->
           <div class="mb-2">
@@ -2879,7 +3175,7 @@
 <!-- Modal d'importation -->
 {#if importingFile}
   <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div class="card p-4 sm:p-6 w-full max-w-md mx-auto">
+    <div class="card p-4 sm:p-6 w-full max-w-md mx-auto bg-gray-100">
       <h2 class="text-xl font-semibold mb-4" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">{t('importing', lang)}</h2>
       <div class="w-full bg-gray-200 rounded-full h-4 mb-4">
         <div class="bg-green-500 h-4 rounded-full" style="width: {(importProgress / importTotal) * 100}%"></div>
@@ -2890,6 +3186,62 @@
       {#if importError}
         <p class="text-red-500 mt-2 text-xs sm:text-sm">{importError}</p>
       {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Dialogue d'exportation -->
+{#if showExportDialog}
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div class="card p-4 sm:p-6 w-full max-w-md mx-auto bg-gray-100">
+      <h2 class="text-xl font-semibold mb-4" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">
+        {t('exportPasswords', lang) || "Exporter les mots de passe"}
+      </h2>
+      
+      <p class="mb-4" style="color: #474b4f;">
+        {t('exportDescription', lang) || "Choisissez le format d'exportation pour vos mots de passe."}
+      </p>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-2" style="color: #474b4f;">
+          {t('exportFormat', lang) || "Format d'exportation"}
+        </label>
+        
+        <div class="mt-2 space-y-2">
+          <label class="flex items-center">
+            <input type="radio" bind:group={exportFormat} value="json" class="mr-2">
+            <span>JSON</span>
+          </label>
+          
+          <label class="flex items-center">
+            <input type="radio" bind:group={exportFormat} value="csv" class="mr-2">
+            <span>CSV</span>
+          </label>
+          
+          <label class="flex items-center">
+            <input type="radio" bind:group={exportFormat} value="txt" class="mr-2">
+            <span>{t('plainText', lang) || "Texte brut"}</span>
+          </label>
+        </div>
+      </div>
+      
+      <div class="flex flex-wrap justify-end gap-2 mt-6">
+        <button 
+          on:click={() => showExportDialog = false}
+          class="px-4 py-2 rounded transition-colors"
+          style="background-color: #e6e6e6; color: #1d1b21;"
+        >
+          {t('cancel', lang) || "Annuler"}
+        </button>
+        
+        <button 
+          on:click={handleExport}
+          class="px-4 py-2 rounded transition-colors"
+          style="background-color: #c3f2f7; color: #1d1b21;"
+        >
+          {t('export', lang) || "Exporter"}
+        </button>
+      </div>
     </div>
   </div>
 {/if}
@@ -3141,3 +3493,107 @@
     </div>
   </div>
 {/if}
+
+<!-- À ajouter à la fin de la page, juste avant </main> -->
+<!-- Modal d'aide pour les raccourcis clavier -->
+{#if showKeyboardHelp}
+  <div 
+    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" 
+    on:click={() => showKeyboardHelp = false}
+    on:keydown={(e) => {
+      if (e.key === 'Escape') {
+        showKeyboardHelp = false;
+        e.preventDefault();
+      }
+    }}
+    tabindex="-1"
+  >
+    <div class="card p-4 sm:p-6 w-full max-w-md mx-auto bg-gray-100" on:click|stopPropagation>
+      <h2 class="text-xl font-semibold mb-4" style="font-family: 'Raleway', sans-serif; color: #1d1b21;">
+        {t('keyboardShortcuts', lang)}
+      </h2>
+      
+      <div class="grid grid-cols-2 gap-y-2">
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">/</kbd>
+          <span>{t('shortcutSearch', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">n</kbd>
+          <span>{t('shortcutNew', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">e</kbd>
+          <span>{t('shortcutExport', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">i</kbd>
+          <span>{t('shortcutImport', lang)}</span>
+        </div>
+
+        <!-- Navigation Vim -->
+        <div class="flex items-center col-span-2 mt-2 mb-1 border-t pt-2">
+          <span class="font-medium">{t('shortcutVimNavigation', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">j</kbd>
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">↓</kbd>
+          <span>{t('shortcutNavigate', lang)} ↓</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">k</kbd>
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">↑</kbd>
+          <span>{t('shortcutNavigate', lang)} ↑</span>
+        </div>
+
+        <!-- Raccourcis de copie -->
+        <div class="flex items-center col-span-2 mt-2 mb-1 border-t pt-2">
+          <span class="font-medium">{t('copyToClipboard', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">u</kbd>
+          <span>{t('shortcutCopyUsername', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">p</kbd>
+          <span>{t('shortcutCopyPassword', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">o</kbd>
+          <span>{t('shortcutCopyOtp', lang)}</span>
+        </div>
+
+        <!-- Autres raccourcis -->
+        <div class="flex items-center col-span-2 mt-2 mb-1 border-t pt-2">
+          <span class="font-medium">{t('other', lang) || "Autres"}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">Enter</kbd>
+          <span>{t('shortcutSelect', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">Esc</kbd>
+          <span>{t('shortcutEscape', lang)}</span>
+        </div>
+        <div class="flex items-center">
+          <kbd class="px-2 py-1 bg-gray-200 rounded-md text-xs mr-2">?</kbd>
+          <span>{t('shortcutHelp', lang)}</span>
+        </div>
+      </div>
+      
+      <div class="mt-6 flex justify-between items-center">
+        <span class="text-xs text-gray-500 italic">
+          <kbd class="px-1 py-0.5 bg-gray-200 rounded-md text-xs">Esc</kbd> {t('toClose', lang) || "pour fermer"}
+        </span>
+        <button 
+          on:click={() => showKeyboardHelp = false}
+          class="px-4 py-2 rounded transition-colors"
+          style="background-color: #f3d9a7; color: #1d1b21;"
+        >
+          {t('close', lang) || "Fermer"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+<!-- Fin du modal d'aide -->

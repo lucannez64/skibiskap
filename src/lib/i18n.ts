@@ -62,6 +62,16 @@ export const translations = {
     clientNotInitialized: "Client non initialisé",
     importError: "Erreur lors de l'importation du fichier",
     
+    // Exportation
+    exportPasswords: "Exporter les mots de passe",
+    exportDescription: "Choisissez le format d'exportation pour vos mots de passe.",
+    exportFormat: "Format d'exportation",
+    export: "Exporter",
+    exportSuccess: "Mots de passe exportés avec succès",
+    exportError: "Erreur lors de l'exportation",
+    plainText: "Texte brut",
+    noCredentialsToExport: "Aucun mot de passe à exporter",
+    
     // Erreurs
     error: "Erreur:",
     updateError: "Erreur lors de la mise à jour",
@@ -162,7 +172,27 @@ export const translations = {
     passwordsToImprove: "mots de passe à améliorer",
     totalPasswords: "mots de passe au total",
     haveibeenpwnedError: "Erreur lors de la vérification des fuites de données",
-    scoreExplanation: "Ce score est calculé en fonction de la faiblesse, de la réutilisation et des compromissions de vos mots de passe."
+    scoreExplanation: "Ce score est calculé en fonction de la faiblesse, de la réutilisation et des compromissions de vos mots de passe.",
+    
+    // Navigation au clavier
+    keyboardShortcuts: "Raccourcis clavier",
+    shortcutSearch: "Rechercher",
+    shortcutNew: "Nouvel identifiant",
+    shortcutExport: "Exporter",
+    shortcutImport: "Importer",
+    shortcutNavigate: "Naviguer dans la liste",
+    shortcutSelect: "Sélectionner l'identifiant",
+    shortcutEscape: "Fermer / Annuler",
+    shortcutCopyUsername: "Copier le nom d'utilisateur",
+    shortcutCopyPassword: "Copier le mot de passe",
+    shortcutCopyOtp: "Copier le code OTP",
+    shortcutHelp: "Afficher l'aide",
+    shortcutVimNavigation: "Navigation style Vim",
+    
+    // Autres traductions
+    close: "Fermer",
+    other: "Autres",
+    toClose: "pour fermer",
   },
   en: {
     // Main titles and buttons
@@ -220,6 +250,16 @@ export const translations = {
     invalidCsvFormat: "Invalid or unrecognized CSV file format (Chrome format expected)",
     clientNotInitialized: "Client not initialized",
     importError: "Error importing file",
+    
+    // Exporting
+    exportPasswords: "Export passwords",
+    exportDescription: "Choose the export format for your passwords.",
+    exportFormat: "Export format",
+    export: "Export",
+    exportSuccess: "Passwords exported successfully",
+    exportError: "Error during export",
+    plainText: "Plain text",
+    noCredentialsToExport: "No passwords to export",
     
     // Errors
     error: "Error:",
@@ -319,7 +359,27 @@ export const translations = {
     passwordsToImprove: "passwords to improve",
     totalPasswords: "total passwords",
     haveibeenpwnedError: "Error checking for data breaches",
-    scoreExplanation: "This score is calculated based on the weakness, reuse, and compromises of your passwords."
+    scoreExplanation: "This score is calculated based on the weakness, reuse, and compromises of your passwords.",
+    
+    // Keyboard navigation
+    keyboardShortcuts: "Keyboard shortcuts",
+    shortcutSearch: "Search",
+    shortcutNew: "New credential",
+    shortcutExport: "Export",
+    shortcutImport: "Import",
+    shortcutNavigate: "Navigate list",
+    shortcutSelect: "Select credential",
+    shortcutEscape: "Close / Cancel",
+    shortcutCopyUsername: "Copy username",
+    shortcutCopyPassword: "Copy password",
+    shortcutCopyOtp: "Copy OTP code",
+    shortcutHelp: "Show help",
+    shortcutVimNavigation: "Vim-style navigation",
+    
+    // Other translations
+    close: "Close",
+    other: "Others",
+    toClose: "to close",
   }
 };
 

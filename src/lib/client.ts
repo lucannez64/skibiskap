@@ -23,6 +23,117 @@ const { Uuid } = pkg;
 // Utiliser une URL relative pour que le proxy Vite fonctionne correctement
 const API_URL = "/api/";
 
+// Cache pour stocker les résultats des requêtes API
+const apiCache = new Map<string, {data: any, timestamp: number}>();
+const CACHE_EXPIRATION = 60000; // 1 minute en millisecondes
+
+// Stockage des fonctions debounce
+interface DebouncedFunction {
+  timeout: NodeJS.Timeout | null;
+  lastCall: number;
+}
+const debouncedFunctions = new Map<string, DebouncedFunction>();
+
+/**
+ * Debounce une fonction pour limiter sa fréquence d'appel
+ * @param fn Fonction à debouncer
+ * @param delay Délai en ms
+ * @param key Clé unique pour identifier la fonction
+ * @returns Fonction debounced
+ */
+function debounce<T extends (...args: any[]) => any>(
+  fn: T,
+  delay: number,
+  key: string
+): (...args: Parameters<T>) => Promise<ReturnType<T>> {
+  return (...args: Parameters<T>): Promise<ReturnType<T>> => {
+    return new Promise((resolve) => {
+      if (!debouncedFunctions.has(key)) {
+        debouncedFunctions.set(key, { timeout: null, lastCall: 0 });
+      }
+      
+      const debouncedFn = debouncedFunctions.get(key)!;
+      const now = Date.now();
+      const elapsed = now - debouncedFn.lastCall;
+      
+      if (debouncedFn.timeout) {
+        clearTimeout(debouncedFn.timeout);
+      }
+      
+      if (elapsed > delay) {
+        // Exécuter immédiatement si assez de temps s'est écoulé
+        debouncedFn.lastCall = now;
+        resolve(fn(...args) as ReturnType<T>);
+      } else {
+        // Sinon attendre le délai
+        debouncedFn.timeout = setTimeout(() => {
+          debouncedFn.lastCall = Date.now();
+          resolve(fn(...args) as ReturnType<T>);
+        }, delay);
+      }
+    });
+  };
+}
+
+/**
+ * Effectue une requête fetch avec mise en cache
+ * @param url URL de la requête
+ * @param options Options fetch
+ * @param cacheKey Clé de cache (si non spécifiée, l'URL sera utilisée)
+ * @param cacheDuration Durée de validité du cache en ms (défaut: CACHE_EXPIRATION)
+ * @returns Résultat de la requête
+ */
+async function cachedFetch(url: string, options?: RequestInit, cacheKey?: string, cacheDuration?: number): Promise<Response> {
+  const key = cacheKey || url;
+  const now = Date.now();
+  
+  // Vérifier si la donnée est en cache et toujours valide
+  if (apiCache.has(key)) {
+    const cachedData = apiCache.get(key)!;
+    if (now - cachedData.timestamp < (cacheDuration || CACHE_EXPIRATION)) {
+      // Retourner les données du cache
+      return new Response(JSON.stringify(cachedData.data), {
+        headers: {'Content-Type': 'application/json'},
+        status: 200
+      });
+    }
+  }
+  
+  // Effectuer la requête réelle
+  const response = await fetch(url, options);
+  
+  // Si la requête a réussi et qu'il s'agit d'une requête GET, mettre en cache
+  if (response.ok && (!options || options.method === undefined || options.method === 'GET')) {
+    try {
+      const clonedResponse = response.clone();
+      const data = await clonedResponse.json();
+      apiCache.set(key, {
+        data,
+        timestamp: now
+      });
+    } catch (error) {
+      console.warn("Impossible de mettre en cache la réponse:", error);
+    }
+  }
+  
+  return response;
+}
+
+/**
+ * Invalide une entrée du cache
+ * @param cacheKey Clé à invalider
+ */
+function invalidateCache(cacheKey: string) {
+  apiCache.delete(cacheKey);
+}
+
+/**
+ * Invalide toutes les entrées du cache
+ */
+function clearCache() {
+  apiCache.clear();
+}
+
 /**
  * Structure pour un mot de passe partagé
  */
@@ -194,7 +305,9 @@ export async function auth(uuid: Uuid, client: Client) {
 }
 
 export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Password[], Uuid[]]|null, shared: [Password[], Uuid[], Uuid[], ShareStatus[]]|null, error: string|null}> {
-  const response = await fetch(API_URL + "send_all_json/" + uuidToStr(uuid));
+  const cacheKey = `get_all_${uuidToStr(uuid)}`;
+  
+  const response = await cachedFetch(API_URL + "send_all_json/" + uuidToStr(uuid), undefined, cacheKey);
   if (!response.ok) {
     return { result: null, shared: null, error: response.statusText };
   }
@@ -341,75 +454,88 @@ export async function update_pass(
   pass: Password,
   client: Client,
 ) {
-  const encrypted = encrypt(pass, client);
-  if (!encrypted.result) {
-    return { result: null, error: encrypted.error };
-  }
-  const eq = send(encrypted.result, client);
-  if (!eq.result) {
-    return { result: null, error: eq.error };
-  }
-  const truer = {
-    ciphertext: Array.from(eq.result.ciphertext),
-    nonce: Array.from(eq.result.nonce),
-    nonce2: Array.from(eq.result.nonce2!),
-  };
-  const res = await fetch(
-    API_URL + "update_pass_json/" + uuidToStr(uuid) + "/" + uuidToStr(uuid2),
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+  try {
+    const { result: ep, error } = encrypt(pass, client);
+    if (!ep || error) {
+      return { result: null, error: error || "Encryption failed" };
+    }
+    
+    const response = await fetch(
+      API_URL + "update_pass_json/" + uuidToStr(uuid) + "/" + uuidToStr(uuid2),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ciphertext: Array.from(ep.ciphertext),
+          nonce: Array.from(ep.nonce),
+          nonce2: ep.nonce2 ? Array.from(ep.nonce2) : null
+        }),
       },
-      body: JSON.stringify(truer),
-    },
-  );
-  if (!res.ok) {
-    return { result: null, error: res.statusText };
+    );
+    
+    if (!response.ok) {
+      return { result: null, error: response.statusText };
+    }
+    
+    // Invalider le cache pour forcer le rechargement des données
+    invalidateCache(`get_all_${uuidToStr(uuid)}`);
+    
+    return { result: response, error: null };
+  } catch (e) {
+    return { result: null, error: e instanceof Error ? e.message : String(e) };
   }
-  const result = await res.json();
-  return { result: result, error: null };
 }
 
 export async function create_pass(uuid: Uuid, pass: Password, client: Client) {
-  const encrypted = encrypt(pass, client);
-  if (!encrypted.result) {
-    return { result: null, error: encrypted.error };
-  }
-  const eq = send(encrypted.result, client);
-  if (!eq.result) {
-    return { result: null, error: eq.error };
-  }
-  const truer = {
-    ciphertext: Array.from(eq.result.ciphertext),
-    nonce: Array.from(eq.result.nonce),
-    nonce2: Array.from(eq.result.nonce2!),
-  };
-  const res = await fetch(
-    API_URL + "create_pass_json/" + uuidToStr(uuid),
-    {
+  try {
+    const { result: ep, error } = encrypt(pass, client);
+    if (!ep || error) {
+      return { result: null, error: error || "Encryption failed" };
+    }
+    const response = await fetch(API_URL + "store_json/" + uuidToStr(uuid), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(truer),
-    },
-  );
-  if (!res.ok) {
-    return { result: null, error: res.statusText };
+      body: JSON.stringify({
+        ciphertext: Array.from(ep.ciphertext),
+        nonce: Array.from(ep.nonce),
+        nonce2: ep.nonce2 ? Array.from(ep.nonce2) : null
+      }),
+    });
+    if (!response.ok) {
+      return { result: null, error: response.statusText };
+    }
+    // Invalider le cache pour forcer le rechargement des données
+    invalidateCache(`get_all_${uuidToStr(uuid)}`);
+    
+    return { result: response, error: null };
+  } catch (e) {
+    return { result: null, error: e instanceof Error ? e.message : String(e) };
   }
-  const result = await res.json();
-  return { result: result, error: null };
 }
 export async function delete_pass(uuid: Uuid, uuid2: Uuid, client: Client) {
-  const res = await fetch(
-    API_URL + "delete_pass_json/" + uuidToStr(uuid) + "/" + uuidToStr(uuid2),
-  );
-  if (!res.ok) {
-    return { result: null, error: res.statusText };
+  try {
+    const response = await fetch(
+      API_URL + "delete_pass_json/" + uuidToStr(uuid) + "/" + uuidToStr(uuid2),
+      {
+        method: "DELETE"
+      }
+    );
+    
+    if (!response.ok) {
+      return { result: null, error: response.statusText };
+    }
+    
+    // Invalider le cache pour forcer le rechargement des données
+    invalidateCache(`get_all_${uuidToStr(uuid)}`);
+    
+    return { result: response, error: null };
+  } catch (e) {
+    return { result: null, error: e instanceof Error ? e.message : String(e) };
   }
-  const result = await res.json();
-  return { result: result, error: null };
 }
 
 /**
@@ -656,22 +782,15 @@ export async function get_shared_pass(
 
 
 export async function get_uuid_from_email(email: string) {
-  const res = await fetch(API_URL + "get_uuid_from_email/" + email);
-  if (!res.ok) {
-    return null;
-  }
-  const result = await res.text();
-  return result;
+  const cacheKey = `uuid_from_email_${email}`;
+  const response = await cachedFetch(API_URL + "get_uuid_json/" + email, undefined, cacheKey);
+  return response.ok ? await response.json() : null;
 }
 
 export async function get_public_key(uuid: Uuid) {
-  const res = await fetch(API_URL + "get_public_key/" + uuidToStr(uuid));
-  if (!res.ok) {
-    return null;
-  }
-  const result = await res.json();
-  const result2: Uint8Array = new Uint8Array(result);
-  return result2;
+  const cacheKey = `public_key_${uuidToStr(uuid)}`;
+  const response = await cachedFetch(API_URL + "get_public_key_json/" + uuidToStr(uuid), undefined, cacheKey);
+  return response.ok ? await response.json() : null;
 }
 
 export async function get_shared_by_user(ownerUuid: Uuid) : Promise<SharedByUser[]|null> {
@@ -717,60 +836,83 @@ export async function get_emails_from_uuids(uuids: Uuid[]): Promise<string[]|nul
   return result;
 }
 export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<SharedByUserEmail[]|null> {
-  const sharedByUser = await get_shared_by_user(ownerUuid);
-  if (!sharedByUser) {
-    return null;
-  } 
-  const emails: SharedByUserEmail[] = [];
-  const emails2 = await Promise.all(sharedByUser.map(async (user) => {
-    const uuids = user.recipient_ids;
-    const uuids2 = uuids.map((uuid) => {
-      const uuid3 = new Uuid(uuid);
-      const uuid4 = {
-        bytes: new Uint8Array(uuid3.toBytes()),
-      };
-      return uuid4;
-    });
-    const emails2 = await get_emails_from_uuids(uuids2);
-    if (typeof user.pass_id == 'string') {
-      const pass_id = new Uuid(user.pass_id);
-      const pass_id2: Uuid = {
-        bytes: new Uint8Array(pass_id.toBytes()),
-      };
-      
-      // Récupérer les statuts pour chaque partage
-      const statuses = await Promise.all(uuids2.map(async (recipientUuid) => {
-        try {
-          const res = await fetch(
-            API_URL + "get_shared_pass_status_json/" + 
-            uuidToStr(ownerUuid) + "/" + 
-            uuidToStr(pass_id2) + "/" + 
-            uuidToStr(recipientUuid)
-          );
-          
-          if (!res.ok) {
-            return ShareStatus.Pending; // Par défaut
-          }
-          
-          const status = await res.json();
-          return status as ShareStatus;
-        } catch (error) {
-          console.error("Erreur lors de la récupération du statut:", error);
-          return ShareStatus.Pending; // Par défaut en cas d'erreur
-        }
-      }));
-      
-      if (emails2) {
-        return {
-          pass_id: pass_id2,
-          emails: emails2,
-          statuses: statuses
-        };
-      }
+  try {
+    const cacheKey = `shared_by_user_${uuidToStr(ownerUuid)}`;
+    const response = await cachedFetch(API_URL + "get_shared_by_user_json/" + uuidToStr(ownerUuid), undefined, cacheKey);
+    
+    if (!response.ok) {
+      return null;
     }
-  }));
-  const emails3 = emails2.filter((email) => email !== undefined);
-  return emails3;
+    
+    const result = await response.json();
+    const sharedByUser: SharedByUser[] = result;
+    
+    if (!sharedByUser) {
+      return null;
+    }
+    
+    const emails2 = await Promise.all(sharedByUser.map(async (user) => {
+      // Utiliser batchGetEmailsFromUuids pour optimiser les requêtes d'emails
+      const uuids2 = user.recipient_ids.map((uuid) => {
+        if (typeof uuid === 'string') {
+          const uuid3 = new Uuid(uuid);
+          return {
+            bytes: new Uint8Array(uuid3.toBytes()),
+          };
+        }
+        return uuid;
+      });
+      
+      const emails2 = await batchGetEmailsFromUuids(uuids2);
+      
+      if (typeof user.pass_id == 'string') {
+        const pass_id = new Uuid(user.pass_id);
+        const pass_id2: Uuid = {
+          bytes: new Uint8Array(pass_id.toBytes()),
+        };
+        
+        // Récupérer les statuts pour chaque partage
+        const statuses = await Promise.all(uuids2.map(async (recipientUuid) => {
+          try {
+            const statusKey = `pass_status_${uuidToStr(ownerUuid)}_${uuidToStr(pass_id2)}_${uuidToStr(recipientUuid)}`;
+            const res = await cachedFetch(
+              API_URL + "get_shared_pass_status_json/" + 
+              uuidToStr(ownerUuid) + "/" + 
+              uuidToStr(pass_id2) + "/" + 
+              uuidToStr(recipientUuid),
+              undefined,
+              statusKey
+            );
+            
+            if (!res.ok) {
+              return ShareStatus.Pending; // Par défaut
+            }
+            
+            const status = await res.json();
+            return status as ShareStatus;
+          } catch (error) {
+            console.error("Erreur lors de la récupération du statut:", error);
+            return ShareStatus.Pending; // Par défaut en cas d'erreur
+          }
+        }));
+        
+        if (emails2) {
+          const sharedByUserEmail: SharedByUserEmail = {
+            pass_id: pass_id2,
+            emails: emails2,
+            statuses: statuses
+          };
+          return sharedByUserEmail;
+        }
+      }
+      return null;
+    }));
+    
+    return emails2.filter((email): email is SharedByUserEmail => email !== null);
+  } catch (error) {
+    console.error("Erreur dans get_shared_by_user_emails:", error);
+    return null;
+  }
 }
 
 export async function reject_shared_pass(recipientUuid: Uuid, ownerUuid: Uuid, passUuid: Uuid) {
@@ -787,5 +929,142 @@ export async function accept_shared_pass(recipientUuid: Uuid, ownerUuid: Uuid, p
     return { result: null, error: res.statusText };
   }
   return { result: null, error: null };
+}
+
+// Fonction pour charger les emails par lots
+export async function batchGetEmailsFromUuids(uuids: Uuid[]): Promise<string[]> {
+  // Diviser en lots de 10 pour éviter les requêtes trop lourdes
+  const batchSize = 10;
+  const batches = [];
+  
+  for (let i = 0; i < uuids.length; i += batchSize) {
+    batches.push(uuids.slice(i, i + batchSize));
+  }
+  
+  // Exécuter les requêtes par lots
+  const results = await Promise.all(
+    batches.map(async (batch) => {
+      const emails = await get_emails_from_uuids(batch);
+      return emails ? emails.filter((email): email is string => email !== null) : [];
+    })
+  );
+  
+  // Fusionner les résultats
+  return results.flat();
+}
+
+// Fonction pour charger les UUIDs par lots
+export async function batchGetUuidsFromEmails(emails: string[]): Promise<Uuid[]> {
+  // Diviser en lots de 10 pour éviter les requêtes trop lourdes
+  const batchSize = 10;
+  const batches = [];
+  
+  for (let i = 0; i < emails.length; i += batchSize) {
+    batches.push(emails.slice(i, i + batchSize));
+  }
+  
+  // Exécuter les requêtes par lots
+  const results = await Promise.all(
+    batches.map(async (batch) => {
+      const uuids = await get_uuids_from_emails(batch);
+      return uuids ? uuids.filter((uuid): uuid is Uuid => uuid !== null) : [];
+    })
+  );
+  
+  // Fusionner les résultats
+  return results.flat();
+}
+
+/**
+ * Exporte les mots de passe au format JSON
+ * @param {Uuid} userUuid - UUID de l'utilisateur
+ * @param {Password[]} passwords - Liste des mots de passe à exporter
+ * @param {Uuid[]} passwordUuids - Liste des UUIDs des mots de passe à exporter
+ * @returns {string} Chaîne JSON contenant les mots de passe exportés
+ */
+export function exportPasswords(userUuid: Uuid, passwords: Password[], passwordUuids: Uuid[]): string {
+  // Créer une structure de données pour l'export
+  const exportData = {
+    version: 1,
+    timestamp: new Date().toISOString(),
+    userId: uuidToStr(userUuid),
+    passwords: passwords.map((password, index) => {
+      return {
+        id: uuidToStr(passwordUuids[index]),
+        username: password.username,
+        password: password.password,
+        app_id: password.app_id || null,
+        description: password.description || null,
+        url: password.url || null,
+        otp: password.otp || null,
+        timestamp: new Date().toISOString()
+      };
+    })
+  };
+  
+  // Convertir en JSON pour l'export
+  return JSON.stringify(exportData, null, 2);
+}
+
+/**
+ * Génère un fichier CSV contenant les mots de passe
+ * @param {Uuid} userUuid - UUID de l'utilisateur
+ * @param {Password[]} passwords - Liste des mots de passe à exporter
+ * @returns {string} Contenu CSV des mots de passe
+ */
+export function exportPasswordsCSV(userUuid: Uuid, passwords: Password[]): string {
+  // En-tête CSV
+  let csv = "Nom d'utilisateur,Mot de passe,Application,Description,URL,Code OTP\r\n";
+  
+  // Ajouter chaque mot de passe au CSV
+  passwords.forEach(password => {
+    // Échapper les virgules et guillemets dans les champs
+    const username = `"${(password.username || '').replace(/"/g, '""')}"`;
+    const pass = `"${(password.password || '').replace(/"/g, '""')}"`;
+    const appId = password.app_id ? `"${password.app_id.replace(/"/g, '""')}"` : '""';
+    const description = password.description ? `"${password.description.replace(/"/g, '""')}"` : '""';
+    const url = password.url ? `"${password.url.replace(/"/g, '""')}"` : '""';
+    const otp = password.otp ? `"${password.otp.replace(/"/g, '""')}"` : '""';
+    
+    csv += `${username},${pass},${appId},${description},${url},${otp}\r\n`;
+  });
+  
+  return csv;
+}
+
+/**
+ * Génère un fichier texte simple contenant les mots de passe
+ * @param {Uuid} userUuid - UUID de l'utilisateur
+ * @param {Password[]} passwords - Liste des mots de passe à exporter
+ * @returns {string} Contenu texte des mots de passe
+ */
+export function exportPasswordsText(userUuid: Uuid, passwords: Password[]): string {
+  // Génération du fichier texte avec formatage
+  let text = `EXPORT DE MOTS DE PASSE\n`;
+  text += `Date: ${new Date().toLocaleString()}\n`;
+  text += `Utilisateur: ${uuidToStr(userUuid)}\n\n`;
+  
+  // Ajouter chaque mot de passe
+  passwords.forEach((password, index) => {
+    text += `=== ${index + 1}. ${password.app_id || 'Sans nom'} ===\n`;
+    text += `Nom d'utilisateur: ${password.username || ''}\n`;
+    text += `Mot de passe: ${password.password || ''}\n`;
+    
+    if (password.url) {
+      text += `URL: ${password.url}\n`;
+    }
+    
+    if (password.otp) {
+      text += `OTP: ${password.otp}\n`;
+    }
+    
+    if (password.description) {
+      text += `Description: ${password.description}\n`;
+    }
+    
+    text += `\n`;
+  });
+  
+  return text;
 }
 
