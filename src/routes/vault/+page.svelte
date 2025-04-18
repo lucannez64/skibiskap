@@ -627,6 +627,7 @@
           sharedPasswordEmails.set(uuidToStr(item.pass_id), item);
         });
       }
+      window.addEventListener('keydown', handleKeyDown);
     } catch (error) {
       console.error("Erreur lors de la récupération des données:", error);
       showToast(t('fetchError', lang) || "Erreur lors de la récupération des données");
@@ -1948,11 +1949,6 @@
     // Copier le mot de passe par défaut
     copyToClipboard(credential.password);
   }
-  
-  // S'assurer que les événements de clavier sont bien gérés
-  onMount(() => {
-    window.addEventListener('keydown', handleKeyDown);
-  });
   
   onDestroy(() => {
     window.removeEventListener('keydown', handleKeyDown);
