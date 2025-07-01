@@ -23,6 +23,81 @@ const { Uuid } = pkg;
 // Utiliser une URL relative pour que le proxy Vite fonctionne correctement
 const API_URL = "/api/";
 
+// Token storage for authentication
+let authToken: string | null = null;
+
+/**
+ * Set the authentication token
+ * @param token The authentication token
+ */
+export function setAuthToken(token: string) {
+  authToken = token;
+  // Store in localStorage for persistence
+  localStorage.setItem('skap_auth_token', token);
+}
+
+/**
+ * Get the current authentication token
+ * @returns The current token or null if not set
+ */
+export function getAuthToken(): string | null {
+  if (!authToken) {
+    // Try to load from localStorage
+    authToken = localStorage.getItem('skap_auth_token');
+  }
+  return authToken;
+}
+
+/**
+ * Clear the authentication token
+ */
+export function clearAuthToken() {
+  authToken = null;
+  localStorage.removeItem('skap_auth_token');
+}
+
+/**
+ * Logout the user by clearing the token and calling the logout endpoint
+ */
+export async function logout(): Promise<void> {
+  const token = getAuthToken();
+  
+  if (token) {
+    try {
+      // Call the logout endpoint to blacklist the token
+      await fetch(API_URL + "logout", {
+        method: "POST",
+        headers: createAuthHeaders()
+      });
+    } catch (error) {
+      console.warn("Failed to call logout endpoint:", error);
+    }
+  }
+  
+  // Clear the token locally regardless of API call success
+  clearAuthToken();
+  
+  // Clear all cached data
+  clearCache();
+}
+
+/**
+ * Create authenticated request headers
+ * @returns Headers object with authentication
+ */
+function createAuthHeaders(): HeadersInit {
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+  
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  
+  return headers;
+}
+
 // Cache pour stocker les résultats des requêtes API
 const apiCache = new Map<string, {data: any, timestamp: number}>();
 const CACHE_EXPIRATION = 60000; // 1 minute en millisecondes
@@ -76,6 +151,36 @@ function debounce<T extends (...args: any[]) => any>(
 }
 
 /**
+ * Handle authentication errors by clearing tokens and redirecting to login
+ */
+function handleAuthError() {
+  clearAuthToken();
+  clearCache();
+  // Redirect to login page if we're in a browser environment
+  if (typeof window !== 'undefined' && window.location) {
+    window.location.href = '/';
+  }
+}
+
+/**
+ * Authenticated fetch wrapper that handles 401 errors
+ * @param url URL to fetch
+ * @param options Fetch options
+ * @returns Promise<Response>
+ */
+async function authenticatedFetch(url: string, options?: RequestInit): Promise<Response> {
+  const response = await fetch(url, options);
+  
+  // Handle authentication errors
+  if (response.status === 401) {
+    handleAuthError();
+    throw new Error('Authentication failed - redirecting to login');
+  }
+  
+  return response;
+}
+
+/**
  * Effectue une requête fetch avec mise en cache
  * @param url URL de la requête
  * @param options Options fetch
@@ -101,6 +206,12 @@ async function cachedFetch(url: string, options?: RequestInit, cacheKey?: string
   
   // Effectuer la requête réelle
   const response = await fetch(url, options);
+  
+  // Handle authentication errors
+  if (response.status === 401) {
+    handleAuthError();
+    throw new Error('Authentication failed - redirecting to login');
+  }
   
   // Si la requête a réussi et qu'il s'agit d'une requête GET, mettre en cache
   if (response.ok && (!options || options.method === undefined || options.method === 'GET')) {
@@ -221,7 +332,7 @@ export async function create_account(email: string) {
     }
     
     // Enregistrer l'utilisateur sur le serveur
-    const response = await fetch(API_URL + "create_user_json/", {
+    const response = await authenticatedFetch(API_URL + "create_user_json/", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -275,39 +386,71 @@ export async function create_account(email: string) {
 }
 
 export async function auth(uuid: Uuid, client: Client) {
-  const response = await fetch(API_URL + "challenge_json/" + uuidToStr(uuid));
-  if (!response.ok) {
-    return { result: null, client: null, error: response.statusText };
-  }
-  const challenge = await response.json();
+  try {
+    // Step 1: Get challenge
+    const response = await authenticatedFetch(API_URL + "challenge_json/" + uuidToStr(uuid));
+    if (!response.ok) {
+      return { result: null, client: null, error: response.statusText };
+    }
+    const challenge = await response.json();
 
-  const challengeBytes = Uint8Array.from(challenge);
-  const signature = ml_dsa87.sign(client.di_q, challengeBytes);
-  const signArray = Array.from(signature);
-  const response2 = await fetch(API_URL + "verify_json/" + uuidToStr(uuid), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(signArray),
-  });
-  if (!response2.ok) {
-    return { result: null, client: null, error: response2.statusText };
+    // Step 2: Sign challenge
+    const challengeBytes = Uint8Array.from(challenge);
+    const signature = ml_dsa87.sign(client.di_q, challengeBytes);
+    const signArray = Array.from(signature);
+    
+    // Step 3: Verify signature and get token
+    const response2 = await authenticatedFetch(API_URL + "verify_json/" + uuidToStr(uuid), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(signArray),
+    });
+    
+    if (!response2.ok) {
+      return { result: null, client: null, error: response2.statusText };
+    }
+    
+    // Extract token from response
+    const tokenResponse = await response2.json();
+    if (typeof tokenResponse === 'string') {
+      // Store the authentication token
+      setAuthToken(tokenResponse);
+    }
+    
+    // Step 4: Sync with authenticated request
+    const response3 = await authenticatedFetch(API_URL + "sync_json/" + uuidToStr(uuid), {
+      headers: createAuthHeaders()
+    });
+    
+    if (!response3.ok) {
+      return { result: null, shared: null, error: response3.statusText };
+    }
+    
+    const result2 = Uint8Array.from(await response3.json());
+    const shared = ml_kem1024.decapsulate(result2, client.ky_q);
+    client.secret = shared;
+    
+    return { result: response2, client: client, error: null };
+  } catch (error) {
+    return { 
+      result: null, 
+      client: null, 
+      error: `Authentication failed: ${error instanceof Error ? error.message : String(error)}` 
+    };
   }
-  const response3 = await fetch(API_URL + "sync_json/" + uuidToStr(uuid));
-  if (!response3.ok) {
-    return { result: null, shared: null, error: response3.statusText };
-  }
-  const result2 = Uint8Array.from(await response3.json());
-  const shared = ml_kem1024.decapsulate(result2, client.ky_q);
-  client.secret = shared;
-  return { result: response2, client: client, error: null };
 }
 
 export async function get_all(uuid: Uuid, client: Client): Promise<{result: [Password[], Uuid[]]|null, shared: [Password[], Uuid[], Uuid[], ShareStatus[]]|null, error: string|null}> {
   const cacheKey = `get_all_${uuidToStr(uuid)}`;
   
-  const response = await cachedFetch(API_URL + "send_all_json/" + uuidToStr(uuid), undefined, cacheKey);
+  // Use authenticated request
+  const response = await cachedFetch(
+    API_URL + "send_all_json/" + uuidToStr(uuid), 
+    { headers: createAuthHeaders() }, 
+    cacheKey
+  );
   if (!response.ok) {
     return { result: null, shared: null, error: response.statusText };
   }
@@ -460,13 +603,11 @@ export async function update_pass(
       return { result: null, error: error || "Encryption failed" };
     }
     
-    const response = await fetch(
+    const response = await authenticatedFetch(
       API_URL + "update_pass_json/" + uuidToStr(uuid) + "/" + uuidToStr(uuid2),
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: createAuthHeaders(),
         body: JSON.stringify({
           ciphertext: Array.from(ep.ciphertext),
           nonce: Array.from(ep.nonce),
@@ -494,15 +635,17 @@ export async function create_pass(uuid: Uuid, pass: Password, client: Client) {
     if (!ep || error) {
       return { result: null, error: error || "Encryption failed" };
     }
-    const response = await fetch(API_URL + "store_json/" + uuidToStr(uuid), {
+    const eq = send(ep, client);
+    if (!eq.result) {
+      return { result: null, error: eq.error };
+    }
+    const response = await authenticatedFetch(API_URL + "create_pass_json/" + uuidToStr(uuid), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: createAuthHeaders(),
       body: JSON.stringify({
-        ciphertext: Array.from(ep.ciphertext),
-        nonce: Array.from(ep.nonce),
-        nonce2: ep.nonce2 ? Array.from(ep.nonce2) : null
+        ciphertext: Array.from(eq.result.ciphertext),
+        nonce: Array.from(eq.result.nonce),
+        nonce2: eq.result.nonce2 ? Array.from(eq.result.nonce2) : null
       }),
     });
     if (!response.ok) {
@@ -518,10 +661,11 @@ export async function create_pass(uuid: Uuid, pass: Password, client: Client) {
 }
 export async function delete_pass(uuid: Uuid, uuid2: Uuid, client: Client) {
   try {
-    const response = await fetch(
+    const response = await authenticatedFetch(
       API_URL + "delete_pass_json/" + uuidToStr(uuid) + "/" + uuidToStr(uuid2),
       {
-        method: "DELETE"
+        method: "GET",
+        headers: createAuthHeaders()
       }
     );
     
@@ -682,16 +826,14 @@ export async function share_pass(
   };
 
   // Envoyer la requête au serveur
-  const res = await fetch(
+  const res = await authenticatedFetch(
     API_URL + "share_pass_json/" + 
     uuidToStr(ownerUuid) + "/" + 
     uuidToStr(passUuid) + "/" + 
     uuidToStr(uuid),
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: createAuthHeaders(),
       body: JSON.stringify(sharedPassJson),
     }
   );
@@ -716,16 +858,14 @@ export async function unshare_pass(
   passUuid: Uuid,
   recipientUuid: Uuid
 ): Promise<{result: string|null, error: string|null}> {
-  const res = await fetch(
+  const res = await authenticatedFetch(
     API_URL + "unshare_pass_json/" + 
     uuidToStr(ownerUuid) + "/" + 
     uuidToStr(passUuid) + "/" + 
     uuidToStr(recipientUuid),
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      }
+      headers: createAuthHeaders()
     }
   );
   
@@ -751,11 +891,14 @@ export async function get_shared_pass(
   passUuid: Uuid,
   client: Client
 ): Promise<{result: Password|null, error: string|null}> {
-  const res = await fetch(
+  const res = await authenticatedFetch(
     API_URL + "get_shared_pass_json/" + 
     uuidToStr(recipientUuid) + "/" + 
     uuidToStr(ownerUuid) + "/" + 
-    uuidToStr(passUuid)
+    uuidToStr(passUuid),
+    {
+      headers: createAuthHeaders()
+    }
   );
   
   if (!res.ok) {
@@ -783,18 +926,28 @@ export async function get_shared_pass(
 
 export async function get_uuid_from_email(email: string) {
   const cacheKey = `uuid_from_email_${email}`;
-  const response = await cachedFetch(API_URL + "get_uuid_json/" + email, undefined, cacheKey);
-  return response.ok ? await response.json() : null;
+  const response = await cachedFetch(
+    API_URL + "get_uuid_from_email/" + email,
+    { headers: createAuthHeaders() },
+    cacheKey
+  );
+  return response.ok ? await response.text() : null;
 }
 
 export async function get_public_key(uuid: Uuid) {
   const cacheKey = `public_key_${uuidToStr(uuid)}`;
-  const response = await cachedFetch(API_URL + "get_public_key_json/" + uuidToStr(uuid), undefined, cacheKey);
-  return response.ok ? await response.json() : null;
+  const response = await cachedFetch(
+    API_URL + "get_public_key/" + uuidToStr(uuid),
+    { headers: createAuthHeaders() },
+    cacheKey
+  );
+  return response.ok ? new Uint8Array(await response.json()) : null;
 }
 
 export async function get_shared_by_user(ownerUuid: Uuid) : Promise<SharedByUser[]|null> {
-  const res = await fetch(API_URL + "get_shared_by_user/" + uuidToStr(ownerUuid));
+  const res = await authenticatedFetch(API_URL + "get_shared_by_user/" + uuidToStr(ownerUuid), {
+    headers: createAuthHeaders()
+  });
   if (!res.ok) {
     return null;
   }
@@ -803,11 +956,9 @@ export async function get_shared_by_user(ownerUuid: Uuid) : Promise<SharedByUser
 }
 
 export async function get_uuids_from_emails(emails: string[]): Promise<Uuid[]|null> {
-  const res = await fetch(API_URL + "get_uuids_from_emails/", {
+  const res = await authenticatedFetch(API_URL + "get_uuids_from_emails/", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: createAuthHeaders(),
     body: JSON.stringify(emails),
   });
   if (!res.ok) {
@@ -822,11 +973,9 @@ export async function get_emails_from_uuids(uuids: Uuid[]): Promise<string[]|nul
     const uuid2 = uuidToStr(uuid);
     return uuid2;
   });
-  const res = await fetch(API_URL + "get_emails_from_uuids/", {
+  const res = await authenticatedFetch(API_URL + "get_emails_from_uuids/", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: createAuthHeaders(),
     body: JSON.stringify(uuids2),
   });
   if (!res.ok) {
@@ -838,7 +987,7 @@ export async function get_emails_from_uuids(uuids: Uuid[]): Promise<string[]|nul
 export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<SharedByUserEmail[]|null> {
   try {
     const cacheKey = `shared_by_user_${uuidToStr(ownerUuid)}`;
-    const response = await cachedFetch(API_URL + "get_shared_by_user_json/" + uuidToStr(ownerUuid), undefined, cacheKey);
+    const response = await cachedFetch(API_URL + "get_shared_by_user/" + uuidToStr(ownerUuid), { headers: createAuthHeaders() }, cacheKey);
     
     if (!response.ok) {
       return null;
@@ -880,7 +1029,7 @@ export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<Shared
               uuidToStr(ownerUuid) + "/" + 
               uuidToStr(pass_id2) + "/" + 
               uuidToStr(recipientUuid),
-              undefined,
+              { headers: createAuthHeaders() },
               statusKey
             );
             
@@ -916,7 +1065,10 @@ export async function get_shared_by_user_emails(ownerUuid: Uuid): Promise<Shared
 }
 
 export async function reject_shared_pass(recipientUuid: Uuid, ownerUuid: Uuid, passUuid: Uuid) {
-  const res = await fetch(API_URL + "reject_shared_pass_json/" + uuidToStr(recipientUuid) + "/" + uuidToStr(ownerUuid) + "/" + uuidToStr(passUuid));
+  const res = await authenticatedFetch(API_URL + "reject_shared_pass_json/" + uuidToStr(recipientUuid) + "/" + uuidToStr(ownerUuid) + "/" + uuidToStr(passUuid), {
+    method: "POST",
+    headers: createAuthHeaders()
+  });
   if (!res.ok) {
     return { result: null, error: res.statusText };
   }
@@ -924,7 +1076,10 @@ export async function reject_shared_pass(recipientUuid: Uuid, ownerUuid: Uuid, p
 }
 
 export async function accept_shared_pass(recipientUuid: Uuid, ownerUuid: Uuid, passUuid: Uuid) {
-  const res = await fetch(API_URL + "accept_shared_pass_json/" + uuidToStr(recipientUuid) + "/" + uuidToStr(ownerUuid) + "/" + uuidToStr(passUuid));
+  const res = await authenticatedFetch(API_URL + "accept_shared_pass_json/" + uuidToStr(recipientUuid) + "/" + uuidToStr(ownerUuid) + "/" + uuidToStr(passUuid), {
+    method: "POST",
+    headers: createAuthHeaders()
+  });
   if (!res.ok) {
     return { result: null, error: res.statusText };
   }

@@ -1,6 +1,7 @@
 <script lang="ts">
   // Our sample list of credentials
   import { onMount, onDestroy } from "svelte";
+  import { browser } from '$app/environment';
   import { goto } from "$app/navigation";
   import { clientex, client } from "../stores";
   import { get_all, update_pass, delete_pass, create_pass, share_pass, get_shared_by_user, get_shared_by_user_emails, get_emails_from_uuids, get_uuid_from_email, unshare_pass, ShareStatus, accept_shared_pass, reject_shared_pass, exportPasswords, exportPasswordsCSV, exportPasswordsText } from "$lib/client";
@@ -627,7 +628,9 @@
           sharedPasswordEmails.set(uuidToStr(item.pass_id), item);
         });
       }
-      window.addEventListener('keydown', handleKeyDown);
+      if (browser) {
+        window.addEventListener('keydown', handleKeyDown);
+      }
     } catch (error) {
       console.error("Erreur lors de la récupération des données:", error);
       showToast(t('fetchError', lang) || "Erreur lors de la récupération des données");
@@ -1485,39 +1488,41 @@
     event.preventDefault();
     event.stopPropagation();
     console.log(event);
+    if (browser) {
     
-    // Obtenir les dimensions de la fenêtre
-    const windowWidth = window.innerWidth;
-    const windowHeight = window.innerHeight;
+      // Obtenir les dimensions de la fenêtre
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
     
-    // Obtenir la position du clic par rapport à la page
-    const x = event.clientX;
-    const y = event.clientY;
+      // Obtenir la position du clic par rapport à la page
+      const x = event.clientX;
+      const y = event.clientY;
     
-    // Dimensions du menu contextuel (approximatives)
-    const menuWidth = 200;
-    const menuHeight = 200; // Hauteur approximative basée sur le nombre d'options
+      // Dimensions du menu contextuel (approximatives)
+      const menuWidth = 200;
+      const menuHeight = 200; // Hauteur approximative basée sur le nombre d'options
     
-    // Calculer la position finale en tenant compte des limites de la fenêtre
-    let finalX = x;
-    let finalY = y;
+      // Calculer la position finale en tenant compte des limites de la fenêtre
+      let finalX = x;
+      let finalY = y;
     
-    // Ajuster la position horizontale si le menu dépasserait la fenêtre
-    if (x + menuWidth > windowWidth) {
-      finalX = windowWidth - menuWidth;
+      // Ajuster la position horizontale si le menu dépasserait la fenêtre
+      if (x + menuWidth > windowWidth) {
+        finalX = windowWidth - menuWidth;
+      }
+    
+      // Ajuster la position verticale si le menu dépasserait la fenêtre
+      if (y + menuHeight > windowHeight) {
+        finalY = windowHeight - menuHeight;
+      }
+    
+      contextMenu = {
+        show: true,
+        x: finalX,
+        y: finalY,
+        credential
+      };
     }
-    
-    // Ajuster la position verticale si le menu dépasserait la fenêtre
-    if (y + menuHeight > windowHeight) {
-      finalY = windowHeight - menuHeight;
-    }
-    
-    contextMenu = {
-      show: true,
-      x: finalX,
-      y: finalY,
-      credential
-    };
   }
 
   // Fonction pour fermer le menu contextuel
@@ -1951,7 +1956,9 @@
   }
   
   onDestroy(() => {
-    window.removeEventListener('keydown', handleKeyDown);
+    if (browser) {
+      window.removeEventListener('keydown', handleKeyDown);
+    }
   });
 </script>
 <svelte:head>
