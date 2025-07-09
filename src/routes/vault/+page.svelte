@@ -58,6 +58,9 @@
 		uuid: string;
 		password: string;
 		otp: string | null;
+		app_id: string | null;
+		description: string | null;
+		url: string | null;
 		twoFA: string | null;
 		intervalId?: number | NodeJS.Timeout | null;
 		sharedBy?: string;
@@ -75,6 +78,9 @@
 		uuid?: string;
 		password?: string;
 		otp?: string | null;
+		app_id?: string | null;
+		description?: string | null;
+		url?: string | null;
 		twoFA?: string | null;
 	}
 
@@ -280,6 +286,9 @@
 		username: '',
 		password: '',
 		otp: '',
+		app_id: '',
+		description: '',
+		url: '',
 		uuid: '',
 		twoFA: null
 	};
@@ -310,9 +319,9 @@
 			const passwordsToExport = credentials.map((cred) => ({
 				username: cred.username,
 				password: cred.password,
-				app_id: cred.service, // Utiliser le champ service comme app_id
-				description: null,
-				url: null,
+				app_id: cred.app_id,
+				description: cred.description,
+				url: cred.url,
 				otp: cred.otp
 			}));
 
@@ -547,15 +556,18 @@
 
 						// Vérifier que cred est de type Password
 						const password = 'password' in cred ? cred.password : '';
-						const url = 'url' in cred ? cred.url : '';
+						const url = 'url' in cred ? cred.url : null;
+						const app_id = 'app_id' in cred ? cred.app_id : null;
+						const description = 'description' in cred ? cred.description : null;
 						const username = 'username' in cred ? cred.username : '';
 						const otp = 'otp' in cred ? cred.otp : null;
+						const service = url || app_id || '';
 
 						try {
 							// Évaluation du mot de passe en arrière-plan
 							if (workerPool) {
 								workerPool
-									.evaluatePassword(password, url!)
+									.evaluatePassword(password, service)
 									.then(({ passwordStrength }) => {
 										// Mise à jour silencieuse, pas besoin de mettre à jour l'interface
 									})
@@ -569,13 +581,16 @@
 
 						return {
 							id: index,
-							service: url,
+							service: service,
 							username,
 							uuid: typeof uuidstr === 'string' ? uuidstr : '',
 							password,
 							otp,
+							app_id,
+							description,
+							url,
 							twoFA: null,
-							favicon: getFaviconUrl(url || ''),
+							favicon: getFaviconUrl(service),
 							pending: false,
 							ownerUuid: null,
 							passUuid: null
@@ -618,8 +633,11 @@
 							const passuuidstr = uuidToStr(passUuid);
 							const owneruuidstr = uuidToStr(ownerUuid);
 							const owneremail = emails.get(owneruuidstr) || 'Utilisateur inconnu';
-							const url = 'url' in cred ? cred.url : '';
+							const url = 'url' in cred ? cred.url : null;
+							const app_id = 'app_id' in cred ? cred.app_id : null;
+							const description = 'description' in cred ? cred.description : null;
 							const otp = 'otp' in cred ? cred.otp : null;
+							const service = url || app_id || '';
 
 							pendingCredentialsStore.update((pendingCredentials) => [
 								...pendingCredentials,
@@ -628,14 +646,17 @@
 									passUuid: passUuid,
 									ownerUuid: ownerUuid,
 									credential: {
-										service: url!,
+										service: service,
 										username: cred.username,
 										uuid: passuuidstr,
 										password: cred.password,
 										otp: otp,
+										app_id,
+										description,
+										url,
 										twoFA: null,
 										id: index,
-										favicon: getFaviconUrl(url || ''),
+										favicon: getFaviconUrl(service),
 										pending: true,
 										ownerUuid: ownerUuid,
 										passUuid: passUuid
@@ -651,23 +672,29 @@
 
 						// Vérifier que cred est de type Password
 						const password = 'password' in cred ? cred.password : '';
-						const url = 'url' in cred ? cred.url : '';
+						const url = 'url' in cred ? cred.url : null;
+						const app_id = 'app_id' in cred ? cred.app_id : null;
+						const description = 'description' in cred ? cred.description : null;
 						const username = 'username' in cred ? cred.username : '';
 						const otp = 'otp' in cred ? cred.otp : null;
+						const service = url || app_id || '';
 						const passuuidstr = uuidToStr(passUuid);
 						const owneruuidstr = uuidToStr(ownerUuid);
 						const owneremail = emails.get(owneruuidstr);
 						return {
 							id: processedCredentials.length + index, // Éviter les conflits d'ID
-							service: url,
+							service: service,
 							username,
 							uuid: typeof passuuidstr === 'string' ? passuuidstr : '',
 							password,
 							otp,
+							app_id,
+							description,
+							url,
 							twoFA: null,
 							sharedBy: typeof owneruuidstr === 'string' ? owneruuidstr : '',
 							owneremail: typeof owneremail === 'string' ? owneremail : '',
-							favicon: getFaviconUrl(url || ''),
+							favicon: getFaviconUrl(service),
 							pending: false,
 							ownerUuid: ownerUuid,
 							passUuid: passUuid
@@ -755,15 +782,15 @@
 	async function saveEdit() {
 		if (
 			editingId === null ||
-			!editedRecord.service ||
+			(!editedRecord.url && !editedRecord.app_id) ||
 			!editedRecord.username ||
 			!editedRecord.password
 		) {
 			return;
 		}
 
-		// Valider le format de l'URL
-		if (!validateUrl(editedRecord.service)) {
+		// Valider le format de l'URL si fournie
+		if (editedRecord.url && !validateUrl(editedRecord.url)) {
 			showToast(t('invalidUrl', lang));
 			return;
 		}
@@ -784,9 +811,9 @@
 			password: editedRecord.password || '',
 			otp: editedRecord.otp ? editedRecord.otp : null,
 			username: editedRecord.username || '',
-			url: editedRecord.service || '',
-			description: null,
-			app_id: null
+			url: editedRecord.url || null,
+			description: editedRecord.description || null,
+			app_id: editedRecord.app_id || null
 		};
 
 		try {
@@ -823,15 +850,19 @@
 			}
 
 			// Mettre à jour l'interface
+			const service = editedRecord.url || editedRecord.app_id || '';
 			credentials = credentials.map((item) => {
 				if (item.id === editingId) {
 					return {
 						...item,
-						service: editedRecord.service || '',
+						service: service,
 						username: editedRecord.username || '',
 						password: editedRecord.password || '',
 						otp: editedRecord.otp || null,
-						favicon: getFaviconUrl(editedRecord.service || '')
+						app_id: editedRecord.app_id || null,
+						description: editedRecord.description || null,
+						url: editedRecord.url || null,
+						favicon: getFaviconUrl(service)
 					};
 				}
 				return item;
@@ -968,9 +999,15 @@
 
 	// Save a new credential. Adjust this function to integrate your backend logic.
 	async function saveNewCredential() {
-		// Valider le format de l'URL
-		if (!validateUrl(newRecord.service)) {
+		// Valider le format de l'URL si fournie
+		if (newRecord.url && !validateUrl(newRecord.url)) {
 			showToast(t('invalidUrl', lang));
+			return;
+		}
+		
+		// Vérifier qu'au moins une URL ou un App ID est fourni
+		if (!newRecord.url && !newRecord.app_id) {
+			showToast(t('requireUrlOrAppId', lang));
 			return;
 		}
 
@@ -983,9 +1020,9 @@
 			password: newRecord.password,
 			otp: newRecord.otp ? newRecord.otp : null,
 			username: newRecord.username,
-			url: newRecord.service,
-			description: null,
-			app_id: null
+			url: newRecord.url ? newRecord.url : null,
+			description: newRecord.description ? newRecord.description : null,
+			app_id: newRecord.app_id ? newRecord.app_id : null
 		};
 
 		try {
@@ -999,15 +1036,19 @@
 			// Create a new credential with an arbitrary new id
 			const newId = credentials.length ? Math.max(...credentials.map((cred) => cred.id)) + 1 : 0;
 
+			const service = newRecord.url || newRecord.app_id || '';
 			const newItem: Credential = {
 				id: newId,
-				service: newRecord.service,
+				service: service,
 				username: newRecord.username,
 				password: newRecord.password,
 				otp: newRecord.otp,
+				app_id: newRecord.app_id,
+				description: newRecord.description,
+				url: newRecord.url,
 				uuid: new Uuid(response.result.bytes).toString(),
 				twoFA: null,
-				favicon: getFaviconUrl(newRecord.service)
+				favicon: getFaviconUrl(service)
 			};
 
 			credentials = [...credentials, newItem];
@@ -1019,6 +1060,9 @@
 				username: '',
 				password: '',
 				otp: '',
+				app_id: '',
+				description: '',
+				url: '',
 				uuid: '',
 				twoFA: null
 			} as typeof newRecord;
@@ -1089,9 +1133,9 @@
 				password: sharingCredential.password,
 				otp: sharingCredential.otp,
 				username: sharingCredential.username,
-				url: sharingCredential.service,
-				description: null,
-				app_id: null
+				url: sharingCredential.url,
+				description: sharingCredential.description,
+				app_id: sharingCredential.app_id
 			};
 
 			const { result, error } = await share_pass(
@@ -2415,18 +2459,47 @@
 			{#if showAddForm}
 				<div id="add-credential-form" class="card p-4 mb-6">
 					<div class="mb-2">
-						<label class="block text-sm font-medium" style="color: #1d1b21;" for="newService">
-							{t('service', lang)}
-						</label>
-						<input
-							id="newService"
-							type="text"
-							bind:value={newRecord.service}
-							class="mt-1 block w-full border rounded-lg p-2
+					<label class="block text-sm font-medium" style="color: #1d1b21;" for="newUrl">
+						{t('url', lang)}
+					</label>
+					<input
+						id="newUrl"
+						type="text"
+						bind:value={newRecord.url}
+						class="mt-1 block w-full border rounded-lg p-2
                    focus:outline-none focus:ring-2"
-							style="border-color: #474b4f;"
-						/>
-					</div>
+						style="border-color: #474b4f;"
+						placeholder={t('urlPlaceholder', lang)}
+					/>
+				</div>
+				<div class="mb-2">
+					<label class="block text-sm font-medium" style="color: #1d1b21;" for="newAppId">
+						{t('appId', lang)}
+					</label>
+					<input
+						id="newAppId"
+						type="text"
+						bind:value={newRecord.app_id}
+						class="mt-1 block w-full border rounded-lg p-2
+                   focus:outline-none focus:ring-2"
+						style="border-color: #474b4f;"
+						placeholder={t('appIdPlaceholder', lang)}
+					/>
+				</div>
+				<div class="mb-2">
+					<label class="block text-sm font-medium" style="color: #1d1b21;" for="newDescription">
+						{t('description', lang)}
+					</label>
+					<input
+						id="newDescription"
+						type="text"
+						bind:value={newRecord.description}
+						class="mt-1 block w-full border rounded-lg p-2
+                   focus:outline-none focus:ring-2"
+						style="border-color: #474b4f;"
+						placeholder={t('descriptionPlaceholder', lang)}
+					/>
+				</div>
 					<div class="mb-2">
 						<label class="block text-sm font-medium" style="color: #1d1b21;" for="newUsername">
 							{t('username', lang)}
@@ -2613,17 +2686,20 @@
 						</button>
 						<button
 							on:click={() => {
-								newRecord = {
-									service: '',
-									username: '',
-									password: '',
-									otp: '',
-									uuid: '',
-									twoFA: null
-								};
-								showAddForm = false;
-								showPasswordGenerator = false;
-							}}
+							newRecord = {
+								service: '',
+								username: '',
+								password: '',
+								otp: '',
+								app_id: '',
+								description: '',
+								url: '',
+								uuid: '',
+								twoFA: null
+							};
+							showAddForm = false;
+							showPasswordGenerator = false;
+						}}
 							class="neutral-btn px-4 py-2 rounded-lg flex-1"
 						>
 							{t('cancel', lang)}
@@ -2704,19 +2780,48 @@
 				>
 					{#if editingId === credential.id}
 						<!-- Edit Mode -->
-						<div class="mb-2">
-							<label class="block text-sm font-medium" style="color: #1d1b21;" for="editService">
-								{t('service', lang)}
-							</label>
-							<input
-								id="editService"
-								type="text"
-								bind:value={editedRecord.service}
-								class="mt-1 block w-full border rounded-lg p-2
+					<div class="mb-2">
+						<label class="block text-sm font-medium" style="color: #1d1b21;" for="editUrl">
+							{t('url', lang)}
+						</label>
+						<input
+							id="editUrl"
+							type="text"
+							bind:value={editedRecord.url}
+							class="mt-1 block w-full border rounded-lg p-2
                      focus:outline-none focus:ring-2"
-								style="border-color: #474b4f;"
-							/>
-						</div>
+							style="border-color: #474b4f;"
+							placeholder={t('urlPlaceholder', lang)}
+						/>
+					</div>
+					<div class="mb-2">
+						<label class="block text-sm font-medium" style="color: #1d1b21;" for="editAppId">
+							{t('appId', lang)}
+						</label>
+						<input
+							id="editAppId"
+							type="text"
+							bind:value={editedRecord.app_id}
+							class="mt-1 block w-full border rounded-lg p-2
+                     focus:outline-none focus:ring-2"
+							style="border-color: #474b4f;"
+							placeholder={t('appIdPlaceholder', lang)}
+						/>
+					</div>
+					<div class="mb-2">
+						<label class="block text-sm font-medium" style="color: #1d1b21;" for="editDescription">
+							{t('description', lang)}
+						</label>
+						<input
+							id="editDescription"
+							type="text"
+							bind:value={editedRecord.description}
+							class="mt-1 block w-full border rounded-lg p-2
+                     focus:outline-none focus:ring-2"
+							style="border-color: #474b4f;"
+							placeholder={t('descriptionPlaceholder', lang)}
+						/>
+					</div>
 						<div class="mb-2">
 							<label class="block text-sm font-medium" style="color: #1d1b21;" for="editUsername">
 								{t('username', lang)}

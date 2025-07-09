@@ -16,9 +16,15 @@ export const translations = {
 
 		// Formulaire d'ajout
 		service: 'Service',
+		url: 'URL',
+		appId: 'ID Application',
+		description: 'Description',
 		username: "Nom d'utilisateur",
 		password: 'Mot de passe',
 		otpUri: 'URI OTP',
+		urlPlaceholder: 'https://exemple.com',
+		appIdPlaceholder: 'Nom ou identifiant de l\'application',
+		descriptionPlaceholder: 'Description optionnelle',
 		save: 'Enregistrer',
 		cancel: 'Annuler',
 		delete: 'Supprimer',
@@ -34,6 +40,7 @@ export const translations = {
 		// Validation
 		invalidUrl:
 			"Format d'URL invalide. Utilisez des formats comme: google.com, osu.ppy.sh, 192.168.1.167:8181",
+		requireUrlOrAppId: 'Veuillez fournir soit une URL soit un ID d\'application',
 
 		// 2FA
 		twoFaCode: 'Code 2FA:',
@@ -212,9 +219,15 @@ export const translations = {
 
 		// Formulaire d'ajout
 		service: 'Service',
+		url: 'URL',
+		appId: 'App ID',
+		description: 'Description',
 		username: 'Username',
 		password: 'Password',
 		otpUri: 'OTP URI',
+		urlPlaceholder: 'https://example.com',
+		appIdPlaceholder: 'Application name or identifier',
+		descriptionPlaceholder: 'Optional description',
 		save: 'Save',
 		cancel: 'Cancel',
 		delete: 'Delete',
@@ -229,6 +242,7 @@ export const translations = {
 
 		// Validation
 		invalidUrl: 'Invalid URL format. Use formats like: google.com, osu.ppy.sh, 192.168.1.167:8181',
+		requireUrlOrAppId: 'Please provide either a URL or an App ID',
 
 		// 2FA
 		twoFaCode: '2FA Code:',
