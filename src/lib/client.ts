@@ -485,6 +485,10 @@ export async function update_pass(uuid: Uuid, uuid2: Uuid, pass: Password, clien
 		if (!ep || error) {
 			return { result: null, error: error || 'Encryption failed' };
 		}
+		const { result: eq, error2 } = send(ep, client);
+		if (!eq || error2) {
+			return { result: null, error: error || 'Send Encryption failed' };
+		}
 
 		const response = await fetch(
 			API_URL + 'update_pass_json/' + uuidToStr(uuid) + '/' + uuidToStr(uuid2),
@@ -494,9 +498,9 @@ export async function update_pass(uuid: Uuid, uuid2: Uuid, pass: Password, clien
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({
-					ciphertext: Array.from(ep.ciphertext),
-					nonce: Array.from(ep.nonce),
-					nonce2: ep.nonce2 ? Array.from(ep.nonce2) : null
+					ciphertext: Array.from(eq.ciphertext),
+					nonce: Array.from(eq.nonce),
+					nonce2: eq.nonce2 ? Array.from(eq.nonce2) : null
 				})
 			}
 		);
@@ -1050,8 +1054,7 @@ export function exportPasswords(
 				app_id: password.app_id || null,
 				description: password.description || null,
 				url: password.url || null,
-				otp: password.otp || null,
-				timestamp: new Date().toISOString()
+				otp: password.otp || null
 			};
 		})
 	};
