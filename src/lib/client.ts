@@ -485,7 +485,7 @@ export async function update_pass(uuid: Uuid, uuid2: Uuid, pass: Password, clien
 		if (!ep || error) {
 			return { result: null, error: error || 'Encryption failed' };
 		}
-		const { result: eq, error2 } = send(ep, client);
+		const { result: eq, error: error2 } = send(ep, client);
 		if (!eq || error2) {
 			return { result: null, error: error || 'Send Encryption failed' };
 		}
@@ -894,12 +894,11 @@ export async function get_shared_by_user_emails(
 	if (!sharedByUser) {
 		return null;
 	}
-	const emails: SharedByUserEmail[] = [];
 	const emails2 = await Promise.all(
 		sharedByUser.map(async (user) => {
 			const uuids = user.recipient_ids;
 			const uuids2 = uuids.map((uuid) => {
-				const uuid3 = new Uuid(uuid);
+				const uuid3 = new Uuid(uuid as unknown as string);
 				const uuid4 = {
 					bytes: new Uint8Array(uuid3.toBytes())
 				};
